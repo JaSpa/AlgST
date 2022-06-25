@@ -22,6 +22,7 @@ dependencies:
 - call-stack
 - containers
 - deepseq
+- diagnose
 - directory
 - dlist
 - filepath

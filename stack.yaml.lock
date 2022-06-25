@@ -18,6 +18,17 @@ packages:
       size: 611
   original:
     hackage: monad-validate-1.3.0.0
+- completed:
+    commit: d3ffbb7f376ddc64f3f349fe3a6a8e49d405cde0
+    git: https://github.com/Mesabloo/diagnose.git
+    name: diagnose
+    pantry-tree:
+      sha256: 66db4a42121a2c7c207ed15b9f703bd3e73eefe3df33520c384b1d6baa811f3e
+      size: 1872
+    version: 2.5.1
+  original:
+    commit: d3ffbb7f376ddc64f3f349fe3a6a8e49d405cde0
+    git: https://github.com/Mesabloo/diagnose.git
 snapshots:
 - completed:
     sha256: d5dc0b770386350f61aa8310d3d347e6ea16466a0b0adb533b64689840eebfd6
