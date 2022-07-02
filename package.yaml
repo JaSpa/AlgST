@@ -19,6 +19,7 @@ dependencies:
 - ansi-terminal
 - array
 - async
+- bytestring
 - call-stack
 - containers
 - deepseq
@@ -40,6 +41,7 @@ dependencies:
 - singletons-th
 - stm
 - template-haskell
+- text
 - th-lift-instances
 - these
 - transformers
