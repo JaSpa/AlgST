@@ -1,23 +1,19 @@
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiWayIf #-}
-{-# LANGUAGE UnliftedNewtypes #-}
 
 module AlgST.Util.SourceManager
   ( -- * Locations and Ranges
-    SrcLoc,
-    SrcRange (..),
-    startLoc,
-    advanceLoc,
+    module AlgST.Util.SourceLocation,
 
     -- * Buffers
     Buffer (..),
     bufferStart,
+    bufferRange,
 
     -- * Handling multiple buffers
     SourceManager,
+    managedBuffers,
 
     -- ** Inserting Buffers
     insertBuffer,
@@ -28,15 +24,18 @@ module AlgST.Util.SourceManager
     findContainingBuffer,
     userSrcLoc,
     prettySrcLoc,
+    diagSrcRange,
   )
 where
 
+import AlgST.Util.SourceLocation
 import Control.Monad
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal (ByteString (..))
 import Data.Char
-import Data.Coerce
-import Data.Hashable
+import Data.Default
+import Data.Foldable
+import Data.Maybe
 import Data.Sequence (Seq ((:<|), (:|>)))
 import Data.Sequence qualified as Seq
 import Data.Text qualified as T
@@ -44,21 +43,8 @@ import Data.Text.Encoding qualified as TE
 import Data.Text.Encoding.Error qualified as TE
 import Data.Text.IO qualified as TIO
 import Data.Word
+import Error.Diagnose qualified as Diagnose
 import Foreign
-import Foreign.ForeignPtr.Unsafe
-import GHC.Generics (Generic)
-
-newtype SrcLoc = SrcLoc {locPtr :: Ptr Word8}
-  deriving newtype (Eq, Ord, Hashable)
-
-advanceLoc :: SrcLoc -> Int -> SrcLoc
-advanceLoc = coerce plusPtr
-
--- | A @SrcRange start end@ represents the half open range @[start, end)@.
-data SrcRange = SrcRange {rangeStart, rangeEnd :: !SrcLoc}
-  deriving stock (Eq, Ord, Generic)
-
-instance Hashable SrcRange
 
 newtype SourceManager
   = -- | A @SourceManager@ consists of a list of buffers ordered by their base
@@ -77,8 +63,8 @@ data Buffer = Buffer
 bufferStart :: Buffer -> SrcLoc
 bufferStart = startLoc . bufferContents
 
-startLoc :: ByteString -> SrcLoc
-startLoc = SrcLoc . basePtr
+bufferRange :: Buffer -> SrcRange
+bufferRange = fullRange . bufferContents
 
 findContainingBuffer ::
   SrcLoc -> SourceManager -> Maybe (FilePath, (ByteString, ByteString))
@@ -87,14 +73,14 @@ findContainingBuffer loc (SourceManager buffers) = do
   b :<| _ <- pure bfs
   let src = bufferContents b
       len = BS.length src
-      start = basePtr src
+      start = unsfeBasePtr src
       end = start `plusPtr` len
   guard $ locPtr loc < end
   pure (bufferName b, BS.splitAt (locPtr loc `minusPtr` start) src)
 
 -- | Extracts a user-presentable @(file, line, column)@ triple from a 'SrcLoc'.
-userSrcLoc :: SrcLoc -> SourceManager -> Maybe (FilePath, Int, Int)
-userSrcLoc loc manager = do
+userSrcLoc :: SourceManager -> SrcLoc -> Maybe (FilePath, (Int, Int))
+userSrcLoc manager loc = do
   (fp, (prefix, _)) <- findContainingBuffer loc manager
   -- To find the line index we count the number of preceding '\n' chars.
   let !ln = BS.count _N prefix
@@ -106,18 +92,25 @@ userSrcLoc loc manager = do
   -- the diagnose library does not support grapheme cluster indices either.
   let colPrefix = BS.takeWhileEnd ((&&) <$> (/= _N) <*> (/= _R)) prefix
   let !col = T.length $ TE.decodeUtf8With TE.lenientDecode colPrefix
-  pure (fp, ln, col)
+  pure (fp, (ln, col))
+
+diagSrcRange :: SourceManager -> SrcRange -> Diagnose.Position
+diagSrcRange mgr (SrcRange start end) = fromMaybe def $ do
+  let mkPos (fp, b) (_, e) = Diagnose.Position b e fp
+  mkPos <$> userSrcLoc mgr start <*> userSrcLoc mgr end
 
 _N, _R :: Word8
 _N = fromIntegral (ord '\n')
 _R = fromIntegral (ord '\r')
 
 -- | Transforms a 'SrcLoc' into a human-readable version.
-prettySrcLoc :: SrcLoc -> SourceManager -> String
-prettySrcLoc loc = maybe "«unknown location»" showLoc . userSrcLoc loc
+prettySrcLoc :: SourceManager -> SrcLoc -> String
+prettySrcLoc mgr = maybe "«unknown location»" showLoc . userSrcLoc mgr
   where
-    showLoc (fp, ln, col) =
-      fp ++ ':' : shows ln (':' : show col)
+    showLoc (fp, (ln, col)) = fp ++ ':' : shows ln (':' : show col)
+
+managedBuffers :: SourceManager -> [Buffer]
+managedBuffers (SourceManager bs) = toList bs
 
 insertBuffer :: Buffer -> SourceManager -> SourceManager
 insertBuffer b (SourceManager bufList) = do
@@ -146,9 +139,6 @@ insertBufferIO name readContents manager = do
   !b <- Buffer name <$> readContents
   let !manager' = insertBuffer b manager
   pure (b, manager')
-
-basePtr :: ByteString -> Ptr Word8
-basePtr (PS fp offset _) = unsafeForeignPtrToPtr fp `plusPtr` offset
 
 splitBufList :: SrcLoc -> Seq Buffer -> (Seq Buffer, Seq Buffer)
 splitBufList !loc = lowerBound \b -> bufferStart b < loc
