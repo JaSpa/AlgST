@@ -73,7 +73,7 @@ findContainingBuffer loc (SourceManager buffers) = do
   b :<| _ <- pure bfs
   let src = bufferContents b
       len = BS.length src
-      start = unsfeBasePtr src
+      start = unsafeBasePtr src
       end = start `plusPtr` len
   guard $ locPtr loc < end
   pure (bufferName b, BS.splitAt (locPtr loc `minusPtr` start) src)
