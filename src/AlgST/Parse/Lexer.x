@@ -8,6 +8,7 @@ module AlgST.Parse.Lexer
 , dropNewlines
 ) where
 
+import AlgST.Parse.Token
 import AlgST.Syntax.Pos
 import AlgST.Syntax.Type (Polarity(..))
 import AlgST.Util.ErrorMessage
@@ -105,107 +106,6 @@ tokens :-
   "(,)"                         { simpleToken TokenPairCon }
 
 {
-
-data Token =
-    TokenNL Pos
-  | TokenUnit Pos
-  | TokenLambda Pos
-  | TokenUnArrow Pos
-  | TokenLinArrow Pos
-  | TokenLParen Pos
-  | TokenRParen Pos
-  | TokenLBracket Pos
-  | TokenRBracket Pos
-  | TokenComma Pos
-  | TokenColon Pos
-  | TokenUpperId (Located String)
-  | TokenPairCon Pos
-  | TokenMOut Pos
-  | TokenMIn Pos
-  | TokenLBrace Pos
-  | TokenRBrace Pos
-  | TokenDot Pos
-  | TokenLowerId (Located String)
-  | TokenOperator (Located String)
-  | TokenInt (Located Integer)
-  | TokenChar (Located Char)
-  | TokenString (Located String)
-  | TokenBool (Located Bool)
-  | TokenRec Pos
-  | TokenLet Pos
-  | TokenIn Pos
-  | TokenEq Pos
-  | TokenData Pos
-  | TokenProtocol Pos
-  | TokenType Pos
-  | TokenPipe Pos
-  | TokenIf Pos
-  | TokenThen Pos
-  | TokenElse Pos
-  | TokenNew Pos
-  | TokenSelect Pos
-  | TokenFork Pos
-  | TokenFork_ Pos
-  | TokenCase Pos
-  | TokenOf Pos
-  | TokenForall Pos
-  | TokenDualof Pos
-  | TokenEnd (Located Polarity)
-  | TokenWild Pos
-  | TokenImport Pos
-  | TokenLPragma Pos
-  | TokenRPragma Pos
-
-instance Show Token where
-  show (TokenNL _) = "\\n"
-  show (TokenUnit _) = "()"
-  show (TokenLambda _) = "λ"
-  show (TokenUnArrow _) = "->"
-  show (TokenLinArrow _) = "-o"
-  show (TokenLParen _) = "("
-  show (TokenRParen _) = ")"
-  show (TokenLBracket _) = "["
-  show (TokenRBracket _) = "]"
-  show (TokenComma _) = ","
-  show (TokenColon _) = ":"
-  show (TokenUpperId (_ :@ c)) = c
-  show (TokenPairCon _) = "(,)"
-  show (TokenMOut _) = "!"
-  show (TokenMIn _) = "?"
-  show (TokenLBrace _) = "{"
-  show (TokenRBrace _) = "}"
-  show (TokenDot _) = "."
-  show (TokenLowerId (_ :@ s)) = s
-  show (TokenOperator (_ :@ s)) = s
-  show (TokenInt (_ :@ i)) = show i
-  show (TokenChar (_ :@ c)) = show c
-  show (TokenBool (_ :@ b)) = show b
-  show (TokenString (_ :@ s)) = s
-  show (TokenRec _) = "rec"
-  show (TokenLet _) = "let"
-  show (TokenIn _) = "in"
-  show (TokenEq _) = "="
-  show (TokenData _) = "data"
-  show (TokenProtocol _) = "protocol"
-  show (TokenType _) = "type"
-  show (TokenPipe _) = "|"
-  show (TokenIf _) = "if"
-  show (TokenThen _) = "then"
-  show (TokenElse _) = "else"
-  show (TokenNew _) = "new"
-  show (TokenSelect _) = "select"
-  show (TokenFork _) = "fork"
-  show (TokenFork_ _) = "fork_"
-  show (TokenCase _) = "case"
-  show (TokenForall _) = "forall"
-  show (TokenWild _) = "_"
-  show (TokenOf _) = "of"
-  show (TokenDualof _) = "dualof"
-  show (TokenEnd (_ :@ p)) = "End" ++ show p
-  show (TokenImport _) = "import"
-  show (TokenLPragma _) = "{-#"
-  show (TokenRPragma _) = "#-}"
-
 data TokenList = TokenList
   { tl_toks :: DL.DList Token
   , tl_nl   :: Maybe Token
@@ -251,75 +151,16 @@ instance ErrorMsg Unexpected where
   msg (Unexpected c) = show c
   msgStyling _ = redFGStyling
 
-instance ErrorMsg Token where
-  msg = show
-  msgStyling _ = redFGStyling
-
 getLineNum :: AlexPosn -> Int
 getLineNum (AlexPn _offset lineNum _colNum) = lineNum
 
 getColumnNum :: AlexPosn -> Int
 getColumnNum (AlexPn _offset _lineNum colNum) = colNum
 
-dropNewlines :: [Token] -> [Token]
-dropNewlines = filter \case
-  TokenNL _ -> False
-  _         -> True
-
 -- POSITIONS
 
 internalPos :: AlexPosn -> Pos
 internalPos (AlexPn _ l c) = Pos l c
-
-instance HasPos Token where
-  pos (TokenNL p) = p
-  pos (TokenUnit p) = p
-  pos (TokenLambda p) = p
-  pos (TokenUnArrow p) = p
-  pos (TokenLinArrow p) = p
-  pos (TokenLParen p) = p
-  pos (TokenRParen p) = p
-  pos (TokenLBracket p) = p
-  pos (TokenRBracket p) = p
-  pos (TokenComma p) = p
-  pos (TokenColon p) = p
-  pos (TokenUpperId (p :@ _)) = p
-  pos (TokenPairCon p) = p
-  pos (TokenMOut p) = p
-  pos (TokenMIn p) = p
-  pos (TokenLBrace p) = p
-  pos (TokenRBrace p) = p
-  pos (TokenDot p) = p
-  pos (TokenLowerId (p :@ _)) = p
-  pos (TokenOperator (p :@ _)) = p
-  pos (TokenInt (p :@ _)) = p
-  pos (TokenChar (p :@ _)) = p
-  pos (TokenBool (p :@ _)) = p
-  pos (TokenString (p :@ _)) = p
-  pos (TokenRec p) = p
-  pos (TokenLet p) = p
-  pos (TokenIn p) = p
-  pos (TokenEq p) = p
-  pos (TokenData p) = p
-  pos (TokenProtocol p) = p
-  pos (TokenType p) = p
-  pos (TokenPipe p) = p
-  pos (TokenNew p) = p
-  pos (TokenSelect p) = p
-  pos (TokenFork p) = p
-  pos (TokenFork_ p) = p
-  pos (TokenCase p) = p
-  pos (TokenForall p) = p
-  pos (TokenWild p) = p
-  pos (TokenIf p) = p
-  pos (TokenThen p) = p
-  pos (TokenElse p) = p
-  pos (TokenOf p) = p
-  pos (TokenDualof p) = p
-  pos (TokenEnd (p :@ _)) = p
-  pos (TokenImport p) = p
-  pos (TokenLPragma p) = p
-  pos (TokenRPragma p) = p
 
 simpleToken :: (Pos -> t) -> AlexPosn -> a -> t
 simpleToken t p _ = t (internalPos p)
