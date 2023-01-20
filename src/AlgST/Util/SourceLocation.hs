@@ -1,18 +1,21 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE TemplateHaskellQuotes #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module AlgST.Util.SourceLocation
   ( -- * Locations
-    SrcLoc (..),
+    SrcLoc (ZeroLoc, ..),
     advanceLoc,
 
     -- * Ranges
-    SrcRange ((:@<), ..),
+    SrcRange ((:@<), ZeroRange, ..),
     unsafeRangeString,
 
     -- * Extracting ranges
@@ -38,11 +41,21 @@ import Foreign
 import GHC.Foreign qualified as GHC
 import GHC.ForeignPtr
 import GHC.Generics
+import Language.Haskell.TH.Syntax (Lift (..))
 import System.IO qualified as IO
 import System.IO.Unsafe
 
 newtype SrcLoc = SrcLoc {locPtr :: Ptr Word8}
   deriving newtype (Eq, Ord, Hashable)
+
+pattern ZeroLoc :: SrcLoc
+pattern ZeroLoc <- SrcLoc ((== nullPtr) -> True)
+  where
+    ZeroLoc = SrcLoc nullPtr
+
+-- | Every @SrcLoc@ is lifted as 'ZeroLoc'.
+instance Lift SrcLoc where
+  liftTyped _ = [||ZeroLoc||]
 
 -- | This instance is only meant for debugging purposes. The output
 -- unconditionally contains colorizing escape sequences: to easier distinguish
@@ -66,7 +79,10 @@ advanceLoc :: SrcLoc -> Int -> SrcLoc
 advanceLoc = coerce plusPtr
 
 data SrcRange = SrcRange {rangeStart, rangeEnd :: !SrcLoc}
-  deriving stock (Eq, Ord, Generic)
+  deriving stock (Eq, Ord, Generic, Lift)
+
+pattern ZeroRange :: SrcRange
+pattern ZeroRange = SrcRange ZeroLoc ZeroLoc
 
 -- | This instance is only meant for debugging purposes. The output
 -- unconditionally contains colorizing escape sequences (see the @Show
@@ -120,6 +136,11 @@ instance HasRange SrcRange where
 
 instance HasRange Void where
   getRange = absurd
+
+instance (HasRange a, HasRange b) => HasRange (Either a b) where
+  getRange = either getRange getRange
+  getStartLoc = either getStartLoc getStartLoc
+  getEndLoc = either getEndLoc getEndLoc
 
 instance (Generic a, GHasRange (Rep a)) => HasRange (Generically a) where
   getRange (Generically a) = getRangeRep (from a)
