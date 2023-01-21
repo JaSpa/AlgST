@@ -1,6 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveLift #-}
+{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -29,6 +30,14 @@ module AlgST.Util.SourceLocation
     startLoc,
     fullRange,
     unsafeBasePtr,
+
+    -- * @Located@
+    Located (..),
+    unL,
+    onUnL,
+    foldL,
+    uncurryL,
+    (@-),
   )
 where
 
@@ -171,3 +180,33 @@ instance GHasRange f => GHasRange (M1 i c f) where
 
 instance HasRange c => GHasRange (K1 i c) where
   getRangeRep (K1 c) = getRange c
+
+-- | Attaches a position to a value of type @a@.
+--
+-- Ordering/Equality is not defined for this type to avoid confusion wether the
+-- position is considered or not. The function 'onUnL' is provided to
+-- simplify comparing and similar functions which do not consider the
+-- position.
+data Located a = !SrcRange :@ a
+  deriving stock (Show, Lift)
+  deriving stock (Functor, Foldable, Traversable)
+
+instance HasRange (Located a) where
+  getRange (r :@ _) = r
+
+infix 9 :@, @-
+
+unL :: Located a -> a
+unL (_ :@ a) = a
+
+foldL :: (a -> b) -> Located a -> b
+foldL f = f . unL
+
+uncurryL :: (SrcRange -> a -> b) -> Located a -> b
+uncurryL f (p :@ a) = f p a
+
+onUnL :: (a -> a -> b) -> Located a -> Located a -> b
+onUnL f (_ :@ x) (_ :@ y) = f x y
+
+(@-) :: HasRange p => p -> a -> Located a
+p @- a = getRange p :@ a
