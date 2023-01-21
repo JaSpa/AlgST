@@ -4,36 +4,41 @@
 
 module AlgST.Parse.Token where
 
-import AlgST.Syntax.Pos
 import AlgST.Syntax.Type (Polarity)
+import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.ErrorMessage
 import AlgST.Util.Output
+import AlgST.Util.SourceLocation
 import Control.Applicative
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.DList qualified as DL
 import Data.Word
+import GHC.Foreign qualified as GHC
 import GHC.Generics (Generic (..))
+import Numeric
+import System.IO qualified as IO
+import System.IO.Unsafe
 
 data Token
 {- ORMOLU_DISABLE -}
-  = TokenNL       Pos
-  | TokenUnit     Pos
-  | TokenLambda   Pos
-  | TokenUnArrow  Pos
-  | TokenLinArrow Pos
-  | TokenLParen   Pos
-  | TokenRParen   Pos
-  | TokenLBracket Pos
-  | TokenRBracket Pos
-  | TokenComma    Pos
-  | TokenColon    Pos
-  | TokenPairCon  Pos
-  | TokenMOut     Pos
-  | TokenMIn      Pos
-  | TokenLBrace   Pos
-  | TokenRBrace   Pos
-  | TokenDot      Pos
+  = TokenNL       SrcRange
+  | TokenUnit     SrcRange
+  | TokenLambda   SrcRange
+  | TokenUnArrow  SrcRange
+  | TokenLinArrow SrcRange
+  | TokenLParen   SrcRange
+  | TokenRParen   SrcRange
+  | TokenLBracket SrcRange
+  | TokenRBracket SrcRange
+  | TokenComma    SrcRange
+  | TokenColon    SrcRange
+  | TokenPairCon  SrcRange
+  | TokenMOut     SrcRange
+  | TokenMIn      SrcRange
+  | TokenLBrace   SrcRange
+  | TokenRBrace   SrcRange
+  | TokenDot      SrcRange
   | TokenUpperId  (Located String)
   | TokenLowerId  (Located String)
   | TokenOperator (Located String)
@@ -41,33 +46,32 @@ data Token
   | TokenChar     (Located Char)
   | TokenString   (Located String)
   | TokenBool     (Located Bool)
-  | TokenRec      Pos
-  | TokenLet      Pos
-  | TokenIn       Pos
-  | TokenEq       Pos
-  | TokenData     Pos
-  | TokenProtocol Pos
-  | TokenType     Pos
-  | TokenPipe     Pos
-  | TokenIf       Pos
-  | TokenThen     Pos
-  | TokenElse     Pos
-  | TokenNew      Pos
-  | TokenSelect   Pos
-  | TokenFork     Pos
-  | TokenFork_    Pos
-  | TokenCase     Pos
-  | TokenOf       Pos
-  | TokenForall   Pos
-  | TokenDualof   Pos
+  | TokenRec      SrcRange
+  | TokenLet      SrcRange
+  | TokenIn       SrcRange
+  | TokenEq       SrcRange
+  | TokenData     SrcRange
+  | TokenProtocol SrcRange
+  | TokenType     SrcRange
+  | TokenPipe     SrcRange
+  | TokenIf       SrcRange
+  | TokenThen     SrcRange
+  | TokenElse     SrcRange
+  | TokenNew      SrcRange
+  | TokenSelect   SrcRange
+  | TokenFork     SrcRange
+  | TokenFork_    SrcRange
+  | TokenCase     SrcRange
+  | TokenOf       SrcRange
+  | TokenForall   SrcRange
+  | TokenDualof   SrcRange
   | TokenEnd      (Located Polarity)
-  | TokenWild     Pos
-  | TokenImport   Pos
-  | TokenLPragma  Pos
-  | TokenRPragma  Pos
+  | TokenWild     SrcRange
+  | TokenImport   SrcRange
+  | TokenLPragma  SrcRange
+  | TokenRPragma  SrcRange
   deriving stock (Show, Generic)
-  -- TODO: Drop this instance in favor of working with SrcLoc/SrcRange
-  deriving (HasPos) via Generically Token
+  deriving (HasRange) via Generically Token
 {- ORMOLU_ENABLE -}
 
 {- ORMOLU_DISABLE -}
@@ -134,6 +138,8 @@ instance ErrorMsg Token where
 
 -- * Lexer support
 
+type LexAction = ByteString -> Either D.Diagnostic Token
+
 type AlexInput = ByteString
 
 alexGetByte :: AlexInput -> Maybe (Word8, AlexInput)
@@ -166,3 +172,31 @@ snocToken tl t =
       tlToks = tlToks tl `DL.append` foldMap DL.singleton (tlNL tl) `DL.snoc` t,
       tlNL = Nothing
     }
+
+-- ** Lexer actions
+
+simpleToken :: (SrcRange -> Token) -> LexAction
+simpleToken f = Right . f . fullRange
+
+textToken :: (Located String -> Token) -> LexAction
+textToken = textToken' id
+
+textToken' :: (String -> a) -> (Located a -> Token) -> LexAction
+textToken' f g s = Right $ g $ fullRange s @- f decoded
+  where
+    decoded = unsafeDupablePerformIO do
+      BS.useAsCStringLen s (GHC.peekCStringLen IO.utf8)
+
+invalidChar :: LexAction
+invalidChar s = Left do
+  D.err
+    (fullRange s)
+    "invalid source character"
+    "skipping this character, trying to continue"
+
+invalidUTF8 :: AlexInput -> D.Diagnostic
+invalidUTF8 s =
+  D.err
+    (SizedRange (startLoc s) 1)
+    "invalid UTF-8"
+    ("unexpected byte 0x" ++ showHex (BS.head s) "")

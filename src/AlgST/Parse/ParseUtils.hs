@@ -76,6 +76,8 @@ import AlgST.Syntax.Pos
 import AlgST.Syntax.Tree qualified as T
 import AlgST.Util.ErrorMessage
 import AlgST.Util.Lenses qualified as L
+import AlgST.Util.SourceLocation (SrcRange)
+import AlgST.Util.SourceLocation qualified as R
 import Control.Arrow
 import Control.Monad
 import Control.Monad.Reader
@@ -314,16 +316,20 @@ data ImportItem = ImportItem
 importKey :: ImportItem -> ImportKey
 importKey = (,) <$> importScope <*> importIdent
 
-mkImportItem :: (Pos -> Located Scope) -> Located Unqualified -> ImportBehaviour -> ImportItem
+mkImportItem ::
+  (SrcRange -> Located Scope) ->
+  R.Located Unqualified ->
+  ImportBehaviour ->
+  ImportItem
 mkImportItem getScope ident behaviour =
   ImportItem
     { importScope = scope,
-      importIdent = unL ident,
+      importIdent = R.unL ident,
       importBehaviour = behaviour,
       importLocation = loc
     }
   where
-    loc :@ scope = getScope $ pos ident
+    loc :@ scope = getScope $ R.getRange ident
 
 -- | Inserts the given 'ImportItem' into the 'ImportMergeState' or emits an
 -- error message if the addition conflicts with imports already present.

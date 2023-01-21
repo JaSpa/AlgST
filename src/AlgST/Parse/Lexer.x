@@ -1,23 +1,14 @@
 {
 {-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE StrictData #-}
 
-module AlgST.Parse.Lexer
-( Token(..)
-, scanTokens
-, dropNewlines
-) where
+module AlgST.Parse.Lexer (AlexInput, AlexReturn(..), alexScan) where
 
 import AlgST.Parse.Token
-import AlgST.Syntax.Pos
 import AlgST.Syntax.Type (Polarity(..))
-import AlgST.Util.ErrorMessage
-import AlgST.Util.Output
-import Control.Applicative
-import Data.DList qualified as DL
+import AlgST.Util.SourceLocation
 }
 
-%wrapper "posn"
+%action "LexAction"
 
 $upper  = [A-Z]
 $lower  = [a-z]
@@ -104,50 +95,5 @@ tokens :-
   @lowerId                      { textToken TokenLowerId }
   @upperId                      { textToken TokenUpperId }
   "(,)"                         { simpleToken TokenPairCon }
-
-{
-scanTokens :: String -> Either Diagnostic [Token]
-scanTokens str = go emptyTokenList (alexStartPos, '\n', [], str)
-  where
-    go !tl inp@(pos,_,_,str) =
-      case alexScan inp 0 of
-        AlexEOF ->
-          -- Forget any pending newline tokens.
-          Right $ runTokenList tl
-        AlexError _ ->
-          Left $ PosError (internalPos pos)
-            [ Error "Unexpected error on input"
-            , Error $ Unexpected $ head str
-            ]
-        AlexSkip  inp' _len ->
-          go tl inp'
-        AlexToken inp' len act -> do
-          let !t = act pos (take len str)
-          go (tl `snocToken` t) inp'
-
-newtype Unexpected = Unexpected Char
-
-instance ErrorMsg Unexpected where
-  msg (Unexpected c) = show c
-  msgStyling _ = redFGStyling
-
-getLineNum :: AlexPosn -> Int
-getLineNum (AlexPn _offset lineNum _colNum) = lineNum
-
-getColumnNum :: AlexPosn -> Int
-getColumnNum (AlexPn _offset _lineNum colNum) = colNum
-
--- POSITIONS
-
-internalPos :: AlexPosn -> Pos
-internalPos (AlexPn _ l c) = Pos l c
-
-simpleToken :: (Pos -> t) -> AlexPosn -> a -> t
-simpleToken t p _ = t (internalPos p)
-
-textToken :: (Located String -> t) -> AlexPosn -> String -> t
-textToken = textToken' id
-
-textToken' :: (String -> a) -> (Located a -> t) -> AlexPosn -> String -> t
-textToken' f t p s = t (internalPos p @- f s)
-}
+-- The error token. This matches a full character if no other rule matches.
+  .                             { invalidChar }
