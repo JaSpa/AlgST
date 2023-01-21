@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -11,11 +12,12 @@
 
 module AlgST.Util.SourceLocation
   ( -- * Locations
-    SrcLoc (ZeroLoc, ..),
+    SrcLoc (NullLoc, ..),
     advanceLoc,
 
     -- * Ranges
-    SrcRange ((:@<), ZeroRange, ..),
+    SrcRange (SizedRange, NullRange, ..),
+    rangeByteCount,
     unsafeRangeString,
 
     -- * Extracting ranges
@@ -30,6 +32,7 @@ module AlgST.Util.SourceLocation
   )
 where
 
+import AlgST.Util
 import AlgST.Util.Generically
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal (ByteString (..))
@@ -48,14 +51,14 @@ import System.IO.Unsafe
 newtype SrcLoc = SrcLoc {locPtr :: Ptr Word8}
   deriving newtype (Eq, Ord, Hashable)
 
-pattern ZeroLoc :: SrcLoc
-pattern ZeroLoc <- SrcLoc ((== nullPtr) -> True)
+pattern NullLoc :: SrcLoc
+pattern NullLoc <- SrcLoc ((== nullPtr) -> True)
   where
-    ZeroLoc = SrcLoc nullPtr
+    NullLoc = SrcLoc nullPtr
 
--- | Every @SrcLoc@ is lifted as 'ZeroLoc'.
+-- | Every @SrcLoc@ is lifted as 'NullLoc'.
 instance Lift SrcLoc where
-  liftTyped _ = [||ZeroLoc||]
+  liftTyped _ = [||NullLoc||]
 
 -- | This instance is only meant for debugging purposes. The output
 -- unconditionally contains colorizing escape sequences: to easier distinguish
@@ -81,30 +84,37 @@ advanceLoc = coerce plusPtr
 data SrcRange = SrcRange {rangeStart, rangeEnd :: !SrcLoc}
   deriving stock (Eq, Ord, Generic, Lift)
 
-pattern ZeroRange :: SrcRange
-pattern ZeroRange = SrcRange ZeroLoc ZeroLoc
+-- | A range of size zero, located at 'NullLoc'.
+pattern NullRange :: SrcRange
+pattern NullRange = SrcRange NullLoc NullLoc
+
+-- | Constructs or deconstructs a 'SrcRange' from a start location and a size.
+pattern SizedRange :: SrcLoc -> Int -> SrcRange
+pattern SizedRange start size <-
+  ((,) <$> rangeStart <*> rangeByteCount -> (!start, !size))
+  where
+    SizedRange start size = SrcRange start (start `advanceLoc` size)
+
+{-# COMPLETE SizedRange #-}
 
 -- | This instance is only meant for debugging purposes. The output
 -- unconditionally contains colorizing escape sequences (see the @Show
 -- 'SrcLoc'@ instance documentation for more information).
 instance Show SrcRange where
-  showsPrec p r =
-    showParen (p > 10) do
-      showString "SrcRange "
-      . coloredPtr (locPtr $ rangeStart r)
+  showsPrec p (SizedRange start sz) = showParen (p > 10) do
+    showString "SrcRange "
+      . coloredPtr (locPtr start)
+      . showString " ("
+      . shows sz
       . showChar ' '
-      . showsPrec 10 (rangeByteSize r)
+      . plural sz (showString "byte") (showString "bytes")
+      . showChar ')'
 
 instance Hashable SrcRange
 
-pattern (:@<) :: SrcLoc -> SrcLoc -> SrcRange
-pattern a :@< b = SrcRange a b
-
-{-# COMPLETE (:@<) #-}
-
 -- | Counts the number of bytes included in the range.
-rangeByteSize :: SrcRange -> Int
-rangeByteSize r = locPtr (rangeEnd r) `minusPtr` locPtr (rangeStart r)
+rangeByteCount :: SrcRange -> Int
+rangeByteCount r = locPtr (rangeEnd r) `minusPtr` locPtr (rangeStart r)
 
 startLoc :: ByteString -> SrcLoc
 startLoc = SrcLoc . unsafeBasePtr
@@ -114,7 +124,7 @@ fullRange bs = SrcRange (startLoc bs) (startLoc bs `advanceLoc` BS.length bs)
 
 unsafeRangeString :: SrcRange -> String
 unsafeRangeString r = unsafeDupablePerformIO do
-  GHC.peekCStringLen IO.utf8 (castPtr (locPtr (rangeStart r)), rangeByteSize r)
+  GHC.peekCStringLen IO.utf8 (castPtr (locPtr (rangeStart r)), rangeByteCount r)
 
 unsafeBasePtr :: ByteString -> Ptr Word8
 unsafeBasePtr (PS fp offset _) = unsafeForeignPtrToPtr fp `plusPtr` offset
@@ -123,7 +133,7 @@ class HasRange a where
   {-# MINIMAL getRange | getStartLoc, getEndLoc #-}
 
   getRange :: a -> SrcRange
-  getRange a = getStartLoc a :@< getEndLoc a
+  getRange a = SrcRange (getStartLoc a) (getEndLoc a)
 
   getStartLoc :: a -> SrcLoc
   getStartLoc = rangeStart . getRange

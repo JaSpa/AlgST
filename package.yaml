@@ -22,7 +22,6 @@ dependencies:
 - bytestring
 - call-stack
 - containers
-- data-default
 - deepseq
 - diagnose
 - directory

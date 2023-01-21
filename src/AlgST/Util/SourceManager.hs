@@ -10,9 +10,11 @@ module AlgST.Util.SourceManager
     Buffer (..),
     bufferStart,
     bufferRange,
+    decodeBuffer,
 
     -- * Handling multiple buffers
     SourceManager,
+    emptyManager,
     managedBuffers,
 
     -- ** Inserting Buffers
@@ -22,9 +24,9 @@ module AlgST.Util.SourceManager
 
     -- ** Accessing Buffers
     findContainingBuffer,
-    userSrcLoc,
     prettySrcLoc,
-    diagSrcRange,
+    prettySrcRange,
+    diagnoseSrcRange,
   )
 where
 
@@ -32,9 +34,8 @@ import AlgST.Util.SourceLocation
 import Control.Monad
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal (ByteString (..))
+import Data.ByteString.Unsafe qualified as BS
 import Data.Char
-import Data.Default
-import Data.Foldable
 import Data.Maybe
 import Data.Sequence (Seq ((:<|), (:|>)))
 import Data.Sequence qualified as Seq
@@ -45,11 +46,15 @@ import Data.Text.IO qualified as TIO
 import Data.Word
 import Error.Diagnose qualified as Diagnose
 import Foreign
+import GHC.Foreign qualified as GHC
+import System.IO qualified as IO
+import System.IO.Unsafe (unsafePerformIO)
 
 newtype SourceManager
   = -- | A @SourceManager@ consists of a list of buffers ordered by their base
     -- pointer.
     SourceManager (Seq Buffer)
+  deriving stock (Show)
 
 -- | A @Buffer@ is consists of a 'ByteString' associated with a name, usually a
 -- 'FilePath'.
@@ -60,15 +65,29 @@ data Buffer = Buffer
     bufferContents :: !ByteString
   }
 
+instance Show Buffer where
+  showsPrec p b = showParen (p > 10) do
+    showString "Buffer "
+      . shows (bufferName b)
+      . showsPrec 11 (fullRange (bufferContents b))
+
 bufferStart :: Buffer -> SrcLoc
 bufferStart = startLoc . bufferContents
 
 bufferRange :: Buffer -> SrcRange
 bufferRange = fullRange . bufferContents
 
+-- | Decodes the UTF-8 encoded 'bufferContents' to a 'String'.
+decodeBuffer :: Buffer -> String
+decodeBuffer b = unsafePerformIO do
+  BS.unsafeUseAsCStringLen (bufferContents b) (GHC.peekCStringLen IO.utf8)
+
+-- | Finds the buffer containing the given 'SrcLoc'. It returns the buffer's
+-- name and the contents split into the part before the 'SrcLoc' and the part
+-- after and including the 'SrcLoc'.
 findContainingBuffer ::
-  SrcLoc -> SourceManager -> Maybe (FilePath, (ByteString, ByteString))
-findContainingBuffer loc (SourceManager buffers) = do
+  SourceManager -> SrcLoc -> Maybe (FilePath, (ByteString, ByteString))
+findContainingBuffer (SourceManager buffers) loc = do
   let (_, bfs) = splitBufList loc buffers
   b :<| _ <- pure bfs
   let src = bufferContents b
@@ -78,39 +97,58 @@ findContainingBuffer loc (SourceManager buffers) = do
   guard $ locPtr loc < end
   pure (bufferName b, BS.splitAt (locPtr loc `minusPtr` start) src)
 
--- | Extracts a user-presentable @(file, line, column)@ triple from a 'SrcLoc'.
-userSrcLoc :: SourceManager -> SrcLoc -> Maybe (FilePath, (Int, Int))
-userSrcLoc manager loc = do
-  (fp, (prefix, _)) <- findContainingBuffer loc manager
-  -- To find the line index we count the number of preceding '\n' chars.
-  let !ln = BS.count _N prefix
-  -- To get the column we count the number of characters since the start of the
-  -- line. To do this (and not only count bytes) we split `prefix` at the last
-  -- line break, decode it back into a text and take the text's length.
-  --
-  -- Sadly, this counts only code points and not grapheme clusters. However,
-  -- the diagnose library does not support grapheme cluster indices either.
-  let colPrefix = BS.takeWhileEnd ((&&) <$> (/= _N) <*> (/= _R)) prefix
-  let !col = T.length $ TE.decodeUtf8With TE.lenientDecode colPrefix
-  pure (fp, (ln, col))
+-- | Calculates the position pointing /after the last/ character.
+--
+-- * It counts codepoints, not grapheme clusters.
+-- * Line and column indices are 1-based.
+endPosition :: ByteString -> (Int, Int)
+endPosition bs = (ln, col)
+  where
+    -- The line index is the number of '\n' chars + 1.
+    !ln = 1 + BS.count _N bs
 
-diagSrcRange :: SourceManager -> SrcRange -> Diagnose.Position
-diagSrcRange mgr (SrcRange start end) = fromMaybe def $ do
-  let mkPos (fp, b) (_, e) = Diagnose.Position b e fp
-  mkPos <$> userSrcLoc mgr start <*> userSrcLoc mgr end
+    -- The column count is the number of characters since the start of the
+    -- line + 1. We split `bs` on the last `\n` or `\r` and decode it which
+    -- gives us access to the number of code points.
+    --
+    -- TODO: Counting code points does not require a full decode.
+    !col = 1 + T.length (TE.decodeUtf8With TE.lenientDecode lastLine)
+    lastLine = BS.takeWhileEnd ((&&) <$> (/= _N) <*> (/= _R)) bs
+
+diagnoseSrcRange :: SourceManager -> SrcRange -> Diagnose.Position
+diagnoseSrcRange mgr range = fromMaybe fallbackLocation do
+  (fp, (prefix, suffix)) <- findContainingBuffer mgr (rangeStart range)
+  let (!sln, !scol) = endPosition prefix
+  let (eln, ecol) = endPosition $ BS.take (rangeByteCount range) suffix
+  let !eln' = sln + eln - 1
+  let !ecol' = if eln == 1 then scol + ecol - 1 else ecol
+  pure $ Diagnose.Position (sln, scol) (eln', ecol') fp
+
+fallbackLocation :: Diagnose.Position
+fallbackLocation = Diagnose.Position (1, 1) (1, 1) "«unknown location»"
 
 _N, _R :: Word8
 _N = fromIntegral (ord '\n')
 _R = fromIntegral (ord '\r')
 
 -- | Transforms a 'SrcLoc' into a human-readable version.
-prettySrcLoc :: SourceManager -> SrcLoc -> String
-prettySrcLoc mgr = maybe "«unknown location»" showLoc . userSrcLoc mgr
+prettySrcLoc :: SourceManager -> SrcLoc -> ShowS
+prettySrcLoc mgr loc = showString fp . showChar '@' . shows ln . showChar ':' . shows col
   where
-    showLoc (fp, (ln, col)) = fp ++ ':' : shows ln (':' : show col)
+    Diagnose.Position (ln, col) _ fp = diagnoseSrcRange mgr (SizedRange loc 0)
 
-managedBuffers :: SourceManager -> [Buffer]
-managedBuffers (SourceManager bs) = toList bs
+prettySrcRange :: SourceManager -> SrcRange -> ShowS
+prettySrcRange mgr r =
+  showString fp . showChar '@' . showLoc s . showChar '-' . showLoc e
+  where
+    showLoc (ln, col) = shows ln . showChar ':' . shows col
+    Diagnose.Position s e fp = diagnoseSrcRange mgr r
+
+emptyManager :: SourceManager
+emptyManager = SourceManager mempty
+
+managedBuffers :: SourceManager -> Seq Buffer
+managedBuffers (SourceManager bs) = bs
 
 insertBuffer :: Buffer -> SourceManager -> SourceManager
 insertBuffer b (SourceManager bufList) = do
@@ -157,10 +195,10 @@ lowerBound lt as0 = go (length as0) mempty as0 mempty
       if
           | y :<| ys <- yys,
             lt y ->
-            -- `y` is less than the the element we are looking for.
-            -- Continue into `ys`.
-            go (n - step - 1) (leftCtxt <> xs :|> y) ys rightCtxt
+              -- `y` is less than the the element we are looking for.
+              -- Continue into `ys`.
+              go (n - step - 1) (leftCtxt <> xs :|> y) ys rightCtxt
           | otherwise ->
-            -- `y` lies on the right of the split.
-            -- Continue into `xs`.
-            go step leftCtxt xs (yys <> rightCtxt)
+              -- `y` lies on the right of the split.
+              -- Continue into `xs`.
+              go step leftCtxt xs (yys <> rightCtxt)
