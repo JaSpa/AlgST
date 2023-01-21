@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE StrictData #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE StrictData #-}
 
 module AlgST.Parse.Token where
 
@@ -8,6 +8,11 @@ import AlgST.Syntax.Pos
 import AlgST.Syntax.Type (Polarity)
 import AlgST.Util.ErrorMessage
 import AlgST.Util.Output
+import Control.Applicative
+import Data.ByteString (ByteString)
+import Data.ByteString qualified as BS
+import Data.DList qualified as DL
+import Data.Word
 import GHC.Generics (Generic (..))
 
 data Token
@@ -60,10 +65,10 @@ data Token
   | TokenImport   Pos
   | TokenLPragma  Pos
   | TokenRPragma  Pos
-{- ORMOLU_ENABLE -}
   deriving stock (Show, Generic)
   -- TODO: Drop this instance in favor of working with SrcLoc/SrcRange
   deriving (HasPos) via Generically Token
+{- ORMOLU_ENABLE -}
 
 {- ORMOLU_DISABLE -}
 prettyToken :: Token -> String
@@ -126,3 +131,38 @@ dropNewlines = filter \case
 instance ErrorMsg Token where
   msg = prettyToken
   msgStyling _ = redFGStyling
+
+-- * Lexer support
+
+type AlexInput = ByteString
+
+alexGetByte :: AlexInput -> Maybe (Word8, AlexInput)
+alexGetByte = BS.uncons
+
+alexInputPrevChar :: AlexInput -> Char
+alexInputPrevChar = error "left context not implemented"
+{-# WARNING alexInputPrevChar "left context not implemented" #-}
+
+data TokenList = TokenList
+  { tlToks :: DL.DList Token,
+    tlNL :: Maybe Token
+  }
+
+emptyTokenList :: TokenList
+emptyTokenList = TokenList DL.empty Nothing
+
+runTokenList :: TokenList -> [Token]
+runTokenList = DL.toList . tlToks
+
+snocToken :: TokenList -> Token -> TokenList
+snocToken tl t@(TokenNL _) = case tlToks tl of
+  -- Ignore any initial newline tokens.
+  DL.Nil -> emptyTokenList
+  -- Remeber the first pending newline position.
+  _ -> tl {tlNL = tlNL tl <|> Just t}
+snocToken tl t =
+  TokenList
+    { -- Insert the pending newline token before the new non-newline token.
+      tlToks = tlToks tl `DL.append` foldMap DL.singleton (tlNL tl) `DL.snoc` t,
+      tlNL = Nothing
+    }

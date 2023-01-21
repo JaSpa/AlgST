@@ -106,26 +106,6 @@ tokens :-
   "(,)"                         { simpleToken TokenPairCon }
 
 {
-data TokenList = TokenList
-  { tl_toks :: DL.DList Token
-  , tl_nl   :: Maybe Token
-  }
-
-emptyTokenList :: TokenList
-emptyTokenList = TokenList DL.empty Nothing
-
-snocToken :: TokenList -> Token -> TokenList
-snocToken tl t@(TokenNL _) = case tl_toks tl of
-  -- Ignore any initial newline tokens.
-  DL.Nil -> emptyTokenList
-  -- Remeber the first pending newline position.
-  _ -> tl { tl_nl = tl_nl tl <|> Just t }
-snocToken tl t = TokenList
-  -- Insert the pending newline token before the new non-newline token.
-  { tl_toks = tl_toks tl `DL.append` foldMap DL.singleton (tl_nl tl) `DL.snoc` t
-  , tl_nl   = Nothing
-  }
-
 scanTokens :: String -> Either Diagnostic [Token]
 scanTokens str = go emptyTokenList (alexStartPos, '\n', [], str)
   where
@@ -133,7 +113,7 @@ scanTokens str = go emptyTokenList (alexStartPos, '\n', [], str)
       case alexScan inp 0 of
         AlexEOF ->
           -- Forget any pending newline tokens.
-          Right $ DL.toList $ tl_toks tl
+          Right $ runTokenList tl
         AlexError _ ->
           Left $ PosError (internalPos pos)
             [ Error "Unexpected error on input"
