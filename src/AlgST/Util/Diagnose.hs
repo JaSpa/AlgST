@@ -1,22 +1,58 @@
+{-# LANGUAGE BangPatterns #-}
+
 module AlgST.Util.Diagnose
-  ( Diagnostic,
+  ( -- * Types
+    Diagnostic,
+    Errors,
+    DErrors,
+
+    -- ** Creating Diagnostics
     err,
     warn,
+
+    -- ** Modifiers
+
+    -- | #modifiers#
     context,
     fix,
     showRange,
     note,
     hint,
-    buildDiagnostic,
+
+    -- * Rendering
+    buildSorted,
+    addSorted,
+    onlyFiles,
+    addBuffer,
   )
 where
 
 import AlgST.Util.SourceManager
-import Control.Monad.Reader
+import Control.Monad.Eta
+import Data.DList.DNonEmpty (DNonEmpty)
 import Data.Foldable
 import Data.List qualified as List
+import Data.List.NonEmpty (NonEmpty)
 import Data.Ord
 import Error.Diagnose qualified as E
+
+-- | A non-empty list of 'Diagnostic's. May contain errors and warnings,
+-- despite its name.
+type Errors = NonEmpty Diagnostic
+
+-- | Difference-version of 'Errors'. Prefer this when accumulating
+-- 'Diagnostic's in a monoidal context.
+type DErrors = DNonEmpty Diagnostic
+
+-- | A @Diagnostic@ is either an error or a warning, including notes, hints,
+-- context, etc.
+--
+-- A new @Diagnostic@ is created using either 'err' or 'warn'. Additional
+-- information can be attached using the [modifiers](#modifiers).
+data Diagnostic = Diagnostic !SrcRange (DiagInfo -> E.Report String)
+
+instance HasRange Diagnostic where
+  getRange (Diagnostic r _) = r
 
 data DiagInfo = DiagInfo
   { diManager :: SourceManager,
@@ -25,26 +61,40 @@ data DiagInfo = DiagInfo
   }
 
 pushNote :: E.Note String -> Diagnostic -> Diagnostic
-pushNote note = modify \di -> di {diNotes = note : diNotes di}
+pushNote note (Diagnostic r build) = Diagnostic r $ oneShot \(!di) -> do
+  build di {diNotes = note : diNotes di}
 
 pushMarker :: SrcRange -> E.Marker String -> Diagnostic -> Diagnostic
-pushMarker range marker diag = Diagnostic do
-  pos <- rangeToPosition range
-  unDiagnostic $ modify (\di -> di {diMarkers = (pos, marker) : diMarkers di}) diag
+pushMarker range marker (Diagnostic r build) = Diagnostic r $ oneShot \(!di) -> do
+  let !pos = rangeToPosition di range
+  build di {diMarkers = (pos, marker) : diMarkers di}
 
-modify :: (DiagInfo -> DiagInfo) -> Diagnostic -> Diagnostic
-modify f (Diagnostic d) = Diagnostic (local f d)
+rangeToPosition :: DiagInfo -> SrcRange -> E.Position
+rangeToPosition = diagnoseSrcRange . diManager
 
-newtype Diagnostic = Diagnostic {unDiagnostic :: Reader DiagInfo (SrcRange, E.Report String)}
-
-rangeToPosition :: SrcRange -> Reader DiagInfo E.Position
-rangeToPosition r = asks \di -> diagnoseSrcRange (diManager di) r
-
--- | Turns a set of 'Diagnostic's into a @"Error.Diagnose".'E.Diagnostic'@.
+-- | Turns a list of 'Diagnostic's into a @"Error.Diagnose".'E.Diagnostic'@.
 --
--- All diagnostics are presorted based on their main source range.
-buildDiagnostic :: Foldable f => SourceManager -> f Diagnostic -> E.Diagnostic String
-buildDiagnostic mgr diags = foldr (flip E.addReport) foldedSources sorted
+-- All files known to the given 'SourceManager' are automatically added. If you
+-- need to build\/render multiple diagnostics with the same 'SourceManager' it
+-- might be preferable to cache the result from 'onlyFiles' and use
+-- 'addSorted'.
+--
+-- The given diagnostics are sorted based on their main 'SrcRange'.
+buildSorted :: SourceManager -> [Diagnostic] -> E.Diagnostic String
+buildSorted mgr diags = addSorted mgr diags (onlyFiles mgr)
+
+-- | Adds a list of diagnostics to a @"Error.Diagnose".'E.Diagnostic'@.
+--
+-- The files referenced by the diagnostics have to be added in an additional
+-- step, or preferably already exist in the given diagnostic.
+--
+-- The diagnostics are added in the order of their main 'SrcRange's. Note that
+-- Diagnostics are only sorted with respect to each other, not the set of
+-- diagnostics already added. Calling this function twice will always add the
+-- second set of diagnostics after the first set.
+addSorted ::
+  SourceManager -> [Diagnostic] -> E.Diagnostic String -> E.Diagnostic String
+addSorted mgr diags d0 = foldr insert d0 sortedReverse
   where
     info =
       DiagInfo
@@ -52,38 +102,57 @@ buildDiagnostic mgr diags = foldr (flip E.addReport) foldedSources sorted
           diMarkers = [],
           diNotes = []
         }
-    sorted = fmap snd do
-      let reports = [runReader diag info | Diagnostic diag <- toList diags]
-      List.sortBy (comparing fst) reports
-    foldedSources =
-      foldl'
-        (\diag buf -> E.addFile diag (bufferName buf) (decodeBuffer buf))
-        mempty
-        (managedBuffers mgr)
 
+    insert (Diagnostic _ f) d = E.addReport d (f info)
+
+    -- We can easily sort in reverse which then allows us to use a right fold
+    -- to add each report to the diagnostic.
+    sortedReverse = do
+      -- `getRange` is a constant time operation for `Diagnostic`. Therefore
+      -- overall it performs better than sortOn, using the
+      -- decorate-sort-undecorate pattern.
+      List.sortBy (comparing (Down . getRange)) diags
+
+-- | Creates a @"Error.Diagnose".'E.Diagnostic'@ without any 'E.Report's but
+-- only the set of all files added to be referenced in reports.
+onlyFiles :: SourceManager -> E.Diagnostic msg
+onlyFiles = foldl' (flip addBuffer) mempty . managedBuffers
+
+-- | Adds a 'Buffer' to a @"Error.Diagnose".'E.Diagnostic'@ as a file to be
+-- referenced in a 'E.Report'.
+addBuffer :: Buffer -> E.Diagnostic msg -> E.Diagnostic msg
+addBuffer buf diag = E.addFile diag (bufferName buf) (decodeBuffer buf)
+
+-- | Creates an error 'Diagnostic'.
 err :: SrcRange -> String -> String -> Diagnostic
-err range heading message = Diagnostic do
-  di <- ask
-  p <- rangeToPosition range
-  pure (range, E.Err Nothing heading ((p, E.This message) : diMarkers di) (diNotes di))
+err range heading message = Diagnostic range $ oneShot \di -> do
+  let !p = rangeToPosition di range
+  E.Err Nothing heading ((p, E.This message) : diMarkers di) (diNotes di)
 
+-- | Creates a warning 'Diagnostic'.
 warn :: SrcRange -> String -> String -> Diagnostic
-warn range heading message = Diagnostic do
-  di <- ask
-  p <- rangeToPosition range
-  pure (range, E.Err Nothing heading ((p, E.This message) : diMarkers di) (diNotes di))
+warn range heading message = Diagnostic range $ oneShot \di -> do
+  let !p = rangeToPosition di range
+  E.Err Nothing heading ((p, E.This message) : diMarkers di) (diNotes di)
 
+-- | Adds a hint to a 'Diagnostic'.
 hint :: String -> Diagnostic -> Diagnostic
 hint = pushNote . E.Hint
 
+-- | Adds a note to a 'Diagnostic'.
 note :: String -> Diagnostic -> Diagnostic
 note = pushNote . E.Note
 
+-- | Adds some additional context to a 'Diagnostic'.
 context :: SrcRange -> String -> Diagnostic -> Diagnostic
 context r = pushMarker r . E.Where
 
+-- | Adds a potential fix to a 'Diagnostic'.
+--
+-- For longer messages prefer 'hint'.
 fix :: SrcRange -> String -> Diagnostic -> Diagnostic
 fix r = pushMarker r . E.Maybe
 
+-- | Include some additional range in the output. No highlighting is applied.
 showRange :: SrcRange -> Diagnostic -> Diagnostic
 showRange r = pushMarker r E.Blank
