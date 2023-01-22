@@ -39,9 +39,16 @@ module AlgST.Util.SourceLocation
     foldL,
     uncurryL,
     (@-),
+
+    -- * Pos transition
+    needRange,
+    needPos,
+    needLoc,
+    needPLoc,
   )
 where
 
+import AlgST.Syntax.Pos qualified as P
 import AlgST.Util
 import AlgST.Util.Generically
 import Data.ByteString qualified as BS
@@ -219,3 +226,15 @@ onUnL f (_ :@ x) (_ :@ y) = f x y
 
 (@-) :: HasRange p => p -> a -> Located a
 p @- a = getRange p :@ a
+
+needPos :: a -> P.Pos
+needPos = undefined
+
+needRange :: a -> SrcRange
+needRange = undefined
+
+needLoc :: P.Located a -> Located a
+needLoc = undefined
+
+needPLoc :: Located a -> P.Located a
+needPLoc = undefined

@@ -85,6 +85,7 @@ import AlgST.Typing.Phase
 import AlgST.Util
 import AlgST.Util.ErrorMessage hiding (Errors)
 import AlgST.Util.PartialOrd
+import AlgST.Util.SourceLocation qualified as R
 import Control.Applicative
 import Control.Category ((>>>))
 import Control.Monad
@@ -266,13 +267,13 @@ checkTypeDecl name = \case
     let allowed = K.TL :| [K.TU]
     kind <- expectNominalKind (pos origin) "data" name (nominalKind decl) allowed
     tcConstructors <- local (bindParams (nominalParams decl)) do
-      traverseConstructors (checkDataCon kind) (nominalConstructors decl)
-    pure $ Just $ DataDecl origin decl {nominalConstructors = tcConstructors}
+      traverseConstructors (checkDataCon kind) (first R.needPos <$> nominalConstructors decl)
+    pure $ Just $ DataDecl origin decl {nominalConstructors = first R.needRange <$> tcConstructors}
   ProtoDecl origin decl -> do
     _ <- expectNominalKind (pos origin) "protocol" name (nominalKind decl) (K.P :| [])
     tcConstructors <- local (bindParams (nominalParams decl)) do
-      traverseConstructors (const checkProtoCon) (nominalConstructors decl)
-    pure $ Just $ ProtoDecl origin decl {nominalConstructors = tcConstructors}
+      traverseConstructors (const checkProtoCon) (first R.needPos <$> nominalConstructors decl)
+    pure $ Just $ ProtoDecl origin decl {nominalConstructors = first R.needRange <$> tcConstructors}
   where
     checkDataCon k _name field =
       kicheck field k
@@ -567,7 +568,7 @@ substituteTypeConstructors subs = nomDecl >>> substituteConstructors
       DataDecl _ d -> d
       ProtoDecl _ d -> d
     substituteConstructors nom =
-      mapConstructors (const $ applySubstitutions subs) (nominalConstructors nom)
+      mapConstructors (const $ applySubstitutions subs) (first R.needPos <$> nominalConstructors nom)
 
 kisynth ::
   (HasKiEnv env, HasKiSt st) =>

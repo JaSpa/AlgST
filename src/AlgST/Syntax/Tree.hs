@@ -27,6 +27,7 @@ import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
 import AlgST.Syntax.Pos
 import AlgST.Syntax.Type qualified as T
+import AlgST.Util.SourceLocation qualified as L
 import Control.Category ((>>>))
 import Control.Monad
 import Data.Foldable
@@ -71,6 +72,9 @@ instance LabeledTree Pos where
 
 instance (LabeledTree a) => LabeledTree (Located a) where
   labeledTree = labeledTree . unL
+
+instance LabeledTree a => LabeledTree (L.Located a) where
+  labeledTree = labeledTree . L.unL
 
 instance LabeledTree K.Kind where
   labeledTree = pure . leaf . show

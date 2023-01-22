@@ -18,6 +18,8 @@ import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Name
 import AlgST.Syntax.Phases
 import AlgST.Syntax.Type qualified as T
+import AlgST.Util.SourceLocation (SrcRange)
+import AlgST.Util.SourceLocation qualified as R
 import Data.Functor.Identity
 import Data.Kind qualified as Hs
 import Data.Map.Strict qualified as Map
@@ -60,7 +62,7 @@ deriving stock instance (T.ForallX Lift x) => Lift (TypeAlias x)
 data TypeNominal stage c = TypeNominal
   { nominalParams :: Params stage,
     nominalKind :: K.Kind,
-    nominalConstructors :: Constructors stage c
+    nominalConstructors :: RConstructors stage c
   }
   deriving (Lift)
 
@@ -69,6 +71,8 @@ type Params stage = [(Located (Name stage Types), K.Kind)]
 type XParams x = Params (XStage x)
 
 type Constructors stage a = NameMapG stage Values (Pos, [a])
+
+type RConstructors stage a = NameMapG stage Values (SrcRange, [a])
 
 mapConstructors ::
   (ProgVar stage -> a -> b) ->
@@ -109,10 +113,10 @@ declConstructors name d = case d of
     -- So the only way to get 'Nothing' here is when the user annotated the
     -- declaration to have kind 'P' which will lead to an erorr diagnosis.
     let mul = K.Un `fromMaybe` K.multiplicity (nominalKind decl)
-    let con (p, items) = DataCon @x p name (declParams d) mul items
+    let con (r, items) = DataCon @x (R.needPos r) name (declParams d) mul items
     Map.map con (nominalConstructors decl)
   ProtoDecl _ decl -> do
-    let con (p, items) = ProtocolCon @x p name (declParams d) items
+    let con (r, items) = ProtocolCon @x (R.needPos r) name (declParams d) items
     Map.map con (nominalConstructors decl)
 
 instance ForallDeclX HasPos x => HasPos (TypeDecl x) where

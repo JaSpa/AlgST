@@ -16,9 +16,7 @@
 {-# LANGUAGE ViewPatterns #-}
 
 module AlgST.Parse.ParseUtils
-  ( needsRange,
-
-    -- * Lexer Utilities
+  ( -- * Lexer Utilities
 
     -- ** Alex definitions
     AlexInput,
@@ -43,7 +41,6 @@ module AlgST.Parse.ParseUtils
     ParsedModule (..),
     emptyParsedModule,
     resolveImports,
-    partitionImports,
 
     -- * Errors
     addError,
@@ -97,13 +94,12 @@ import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Module
 import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
-import AlgST.Syntax.Pos
+import AlgST.Syntax.Pos qualified as P
 import AlgST.Syntax.Tree qualified as T
 import AlgST.Util.Diagnose (DErrors)
 import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.Lenses qualified as L
-import AlgST.Util.SourceLocation (SrcRange)
-import AlgST.Util.SourceManager qualified as R
+import AlgST.Util.SourceManager
 import Control.Arrow
 import Control.Monad
 import Control.Monad.Reader
@@ -111,9 +107,7 @@ import Control.Monad.State
 import Control.Monad.Validate
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
-import Data.CallStack (HasCallStack)
 import Data.DList.DNonEmpty qualified as DNE
-import Data.Either
 import Data.Function
 import Data.Functor.Identity
 import Data.HashMap.Strict qualified as HM
@@ -144,13 +138,13 @@ alexInputPrevChar = error "left context not implemented"
 {-# WARNING alexInputPrevChar "left context not implemented" #-}
 
 simpleToken :: (SrcRange -> Token) -> LexAction
-simpleToken f = Right . f . R.fullRange
+simpleToken f = Right . f . fullRange
 
-textToken :: (R.Located String -> Token) -> LexAction
+textToken :: (Located String -> Token) -> LexAction
 textToken = textToken' id
 
-textToken' :: (String -> a) -> (R.Located a -> Token) -> LexAction
-textToken' f g s = Right $ g $ R.fullRange s R.@- f decoded
+textToken' :: (String -> a) -> (Located a -> Token) -> LexAction
+textToken' f g s = Right $ g $ fullRange s @- f decoded
   where
     decoded = unsafeDupablePerformIO do
       BS.useAsCStringLen s (GHC.peekCStringLen IO.utf8)
@@ -158,7 +152,7 @@ textToken' f g s = Right $ g $ R.fullRange s R.@- f decoded
 invalidChar :: LexAction
 invalidChar s = Left do
   D.err
-    (R.fullRange s)
+    (fullRange s)
     "invalid source character"
     "skipping this character, trying to continue"
 
@@ -171,7 +165,7 @@ invalidUTF8 s =
   where
     err =
       D.err
-        (R.SizedRange (R.startLoc s) 1)
+        (SizedRange (startLoc s) 1)
         "invalid UTF-8"
         ("unexpected byte 0x" ++ showByte (BS.head s))
         & D.hint "I stopped reading the input file here."
@@ -197,21 +191,6 @@ resolveImports lookupModule = do
   let resolve name = (name,) <$> lookupModule name
   traverse (traverse (traverse resolve)) . parsedImports
 
-partitionImports ::
-  (ModuleName -> Maybe a) ->
-  ParsedModule ->
-  (Map.Map ModuleName Pos, [Located (Import (ModuleName, a))])
-partitionImports f =
-  parsedImports
-    >>> fmap (\locImp -> maybe (failed locImp) Right (resolve locImp))
-    >>> partitionEithers
-    >>> first (Map.fromListWith min)
-  where
-    failed (p :@ i) =
-      Left (importTarget i, p)
-    resolve =
-      traverse (traverse (\n -> (n,) <$> f n))
-
 instance T.LabeledTree ParsedModule where
   labeledTree pm =
     [ T.tree "imports" [T.labeledTree (parsedImports pm)],
@@ -235,10 +214,10 @@ imsHiddenL :: Lens' ImportMergeState ImportHidden
 imsRenamedL :: Lens' ImportMergeState ImportRenamed
 {- ORMOLU_ENABLE -}
 
-type ParseM = ReaderT R.Buffer (Validate DErrors)
+type ParseM = ReaderT Buffer (Validate DErrors)
 
 -- | Evaluates a value in the 'ParseM' monad producing a list of errors.
-runParseM :: R.Buffer -> ParseM a -> Either D.Errors a
+runParseM :: Buffer -> ParseM a -> Either D.Errors a
 runParseM buf =
   flip runReaderT buf
     >>> mapErrors DNE.toNonEmpty
@@ -264,15 +243,12 @@ data Parenthesized
   | InParens
   deriving (Eq)
 
-needsRange :: (HasCallStack) => a -> SrcRange
-needsRange = error "needs a SrcRange"
-
 sectionsParenthesized :: Parenthesized -> OperatorSequence Parse -> ParseM PExp
 sectionsParenthesized TopLevel ops | Just op <- sectionOperator ops = do
   addError $
-    D.err (needsRange op) "missing argument" "operator is missing an argument"
+    D.err (needRange op) "missing argument" "operator is missing an argument"
       -- The range for the fix should include operator + the one argument we have
-      & D.fix (needsRange op) "wrap it in parentheses for an operator section"
+      & D.fix (needRange op) "wrap it in parentheses for an operator section"
   pure $ E.Exp $ Right ops
 sectionsParenthesized _ ops = do
   pure $ E.Exp $ Right ops
@@ -315,7 +291,7 @@ completePrevious = Kleisli \p -> do
       pure p
     Just (loc :@ name, sig) -> do
       put $! bst {builderCurValueDecl = Nothing}
-      let decl = SignatureDecl loc sig
+      let decl = SignatureDecl (needPos loc) sig
       sigs <- lift $ insertNoDuplicates name decl (moduleSigs p)
       pure p {moduleSigs = sigs}
 
@@ -360,16 +336,16 @@ moduleValueBinding valueName params e = Kleisli \p0 -> do
     Nothing -> lift do
       addError $
         D.err
-          (needsRange valueName)
+          (needRange valueName)
           "missing declaration"
           "binding should be preceeded by its declaration"
       pure p
     Just (defLoc :@ _, ty) -> lift do
       let decl =
             ValueDecl
-              { valuePos = defLoc,
+              { valuePos = needPos defLoc,
                 valueType = ty,
-                valueParams = params,
+                valueParams = needPLoc <$> params,
                 valueBody = e
               }
       parsedValues' <-
@@ -378,7 +354,7 @@ moduleValueBinding valueName params e = Kleisli \p0 -> do
           (Right decl)
           (moduleValues p)
       when (unL valueName `Map.member` moduleSigs p) do
-        addError $ errorImportShadowed (needsRange valueName)
+        addError $ errorImportShadowed (needRange valueName)
       pure p {moduleValues = parsedValues'}
 
 moduleTypeDecl :: TypeVar PStage -> TypeDecl Parse -> ModuleBuilder
@@ -393,26 +369,29 @@ data ImportItem = ImportItem
   { importScope :: !Scope,
     importIdent :: !Unqualified,
     importBehaviour :: !ImportBehaviour,
-    importLocation :: !Pos
+    importItemRange :: !SrcRange
   }
+
+instance HasRange ImportItem where
+  getRange = importItemRange
 
 importKey :: ImportItem -> ImportKey
 importKey = (,) <$> importScope <*> importIdent
 
 mkImportItem ::
   (SrcRange -> Located Scope) ->
-  R.Located Unqualified ->
+  Located Unqualified ->
   ImportBehaviour ->
   ImportItem
 mkImportItem getScope ident behaviour =
   ImportItem
     { importScope = scope,
-      importIdent = R.unL ident,
+      importIdent = unL ident,
       importBehaviour = behaviour,
-      importLocation = loc
+      importItemRange = range
     }
   where
-    loc :@ scope = getScope $ R.getRange ident
+    range :@ scope = getScope $ getRange ident
 
 -- | Inserts the given 'ImportItem' into the 'ImportMergeState' or emits an
 -- error message if the addition conflicts with imports already present.
@@ -420,8 +399,8 @@ mkImportItem getScope ident behaviour =
 -- ==== __@ImportItem@ Conflicts__
 --
 -- The table below describes which kinds of 'ImportItem's are compatible.
--- Renamed items are are compared with other items based on the new name not
--- the original name.
+-- Renamed items are compared with other items based on the new name not the
+-- original name.
 --
 -- +--------------+--------------+--------------+--------------+
 -- |              | __hidden__   | __as-is__    | __renamed__  |
@@ -451,56 +430,57 @@ mkImportItem getScope ident behaviour =
 --
 --     > import Some.Module (someName, someName)
 --     > import Some.Module (*, someName as _, someName as _)
-addImportItem :: Pos -> ImportMergeState -> ImportItem -> ParseM ImportMergeState
-addImportItem stmtLoc ims ii@ImportItem {..} = case importBehaviour of
+addImportItem :: SrcRange -> ImportMergeState -> ImportItem -> ParseM ImportMergeState
+addImportItem importStmtRange ims ii@ImportItem {..} = case importBehaviour of
   ImportHide
     | Just other <- HM.lookup (importKey ii) (imsRenamed ims),
       HS.member (importKey ii) (imsAsIs ims) ->
         -- Hiding once and importing as-is conflicts.
-        conflict $ needsRange other R.@- ImportAsIs
-    | otherwise ->
+        conflict $ needRange other @- ImportAsIs
+    | otherwise -> ok do
         -- Hiding twice is alright (we might want to emit a warning). Hiding also
         -- explicitly allows some other identifier to reuse the name.
-        ok $ imsHiddenL . L.hashAt (importKey ii) .~ Just importLocation
+        imsHiddenL . L.hashAt (importKey ii) .~ Just (needPos importItemRange)
   ImportAsIs
     | Just hideLoc <- HM.lookup (importKey ii) (imsHidden ims) ->
         -- Hiding once and importing as-is conflicts.
-        conflict $ needsRange hideLoc R.@- ImportHide
-    | Just (otherLoc :@ orig) <- HM.lookup (importKey ii) (imsRenamed ims),
+        conflict $ needRange hideLoc @- ImportHide
+    | Just (otherLoc P.:@ orig) <- HM.lookup (importKey ii) (imsRenamed ims),
       not $ HS.member (importKey ii) (imsAsIs ims) ->
         -- Importing once as-is and mapping another identifier to this name
         -- conflicts.
-        conflict $ needsRange otherLoc R.@- ImportFrom orig
-    | otherwise ->
+        conflict $ needRange otherLoc @- ImportFrom orig
+    | otherwise -> ok do
         -- Importing twice as-is is alright (we might want to emit a warning).
         -- Remeber this import.
-        ok $
-          imsAsIsL %~ HS.insert (importKey ii)
-            >>> imsRenamedL . L.hashAt (importKey ii) .~ Just (importLocation @- importIdent)
+        imsAsIsL %~ HS.insert (importKey ii)
+          >>> imsRenamedL . L.hashAt (importKey ii)
+            .~ Just (needPos importItemRange P.@- importIdent)
   ImportFrom orig
-    | Just (otherLoc :@ otherName) <- HM.lookup (importKey ii) (imsRenamed ims) -> do
+    | Just (otherLoc P.:@ otherName) <- HM.lookup (importKey ii) (imsRenamed ims) -> do
         -- Mapping another identifier to the same name conflicts, be it via an
         -- explicit rename or an as-is import.
         let isAsIs = HS.member (importKey ii) (imsAsIs ims)
-        conflict $ needsRange otherLoc R.@- if isAsIs then ImportAsIs else ImportFrom otherName
-    | otherwise ->
+        conflict $ needRange otherLoc @- if isAsIs then ImportAsIs else ImportFrom otherName
+    | otherwise -> ok do
         -- An explicit hide is ok.
-        ok $ imsRenamedL . L.hashAt (importKey ii) .~ Just (importLocation @- orig)
+        imsRenamedL . L.hashAt (importKey ii)
+          .~ Just (needPos importItemRange P.@- orig)
   where
     ok f = pure (f ims)
     conflict other =
       ims
         <$ addErrors
           [ errorConflictingImports
-              (needsRange stmtLoc)
+              importStmtRange
               (importKey ii)
               other
-              (needsRange importLocation R.@- importBehaviour)
+              (importItemRange @- importBehaviour)
           ]
 
-mergeImportAll :: Pos -> Pos -> [ImportItem] -> ParseM ImportSelection
-mergeImportAll stmtLoc allLoc =
-  foldM (addImportItem stmtLoc) emptyMergeState
+mergeImportAll :: SrcRange -> SrcRange -> [ImportItem] -> ParseM ImportSelection
+mergeImportAll stmtRange allRange =
+  foldM (addImportItem stmtRange) emptyMergeState
     >>> fmap \ims -> do
       -- Add the implicitly hidden set to the explicitly hidden set. If an
       -- identifier is hidden explicitly we prefer that entry.
@@ -512,14 +492,14 @@ mergeImportAll stmtLoc allLoc =
       -- hides.
       let allHidden =
             HM.foldlWithKey'
-              (\hm (scope, _) (_ :@ u) -> HM.insertWith const (scope, u) ZeroPos hm)
+              (\hm (scope, _) (_ P.:@ u) -> HM.insertWith const (scope, u) P.ZeroPos hm)
               (imsHidden ims)
               (imsRenamed ims)
-      ImportAll allLoc allHidden (imsRenamed ims)
+      ImportAll (needPos allRange) allHidden (imsRenamed ims)
 
-mergeImportOnly :: Pos -> [ImportItem] -> ParseM ImportSelection
-mergeImportOnly stmtLoc =
-  foldM (addImportItem stmtLoc) emptyMergeState
+mergeImportOnly :: SrcRange -> [ImportItem] -> ParseM ImportSelection
+mergeImportOnly stmtRange =
+  foldM (addImportItem stmtRange) emptyMergeState
     >>> fmap (ImportOnly . imsRenamed)
 
 -- | Inserts the value under the given key into the map. If there is already a
@@ -553,7 +533,7 @@ class DuplicateError k a where
 
 -- | Message for duplicate type declarations.
 instance DuplicateError (Name PStage Types) (TypeDecl Parse) where
-  duplicateError _ x y = errorMultipleDeclarations (needsRange x) (needsRange y)
+  duplicateError _ x y = errorMultipleDeclarations (needRange x) (needRange y)
 
 -- | Message for a duplicated top-level value declaration. This includes both
 -- constrcutor names between two declarations, and top-level functions.
@@ -562,20 +542,20 @@ instance
     (Name PStage Values)
     (Either (ConstructorDecl Parse) (ValueDecl Parse))
   where
-  duplicateError _ x y = errorMultipleDeclarations (needsRange x) (needsRange y)
+  duplicateError _ x y = errorMultipleDeclarations (needRange x) (needRange y)
 
 instance DuplicateError (Name PStage Values) (SignatureDecl Parse) where
-  duplicateError _ x y = errorMultipleDeclarations (needsRange x) (needsRange y)
+  duplicateError _ x y = errorMultipleDeclarations (needRange x) (needRange y)
 
 -- | Message for a duplicated constructor inside a type declaration.
-instance DuplicateError (Name PStage Values) (Pos, [PType]) where
-  duplicateError _ (p1, _) (p2, _) = errorMultipleDeclarations (needsRange p1) (needsRange p2)
+instance DuplicateError (Name PStage Values) (SrcRange, [PType]) where
+  duplicateError _ (p1, _) (p2, _) = errorMultipleDeclarations (needRange p1) (needRange p2)
 
 -- | Message for a duplicate branch in a case expression:
 --
 -- > case … of { A -> …, A -> … }
 instance DuplicateError (Name PStage Values) (E.CaseBranch f Parse) where
-  duplicateError _ x y = errorDuplicateBranch (needsRange x) (needsRange y)
+  duplicateError _ x y = errorDuplicateBranch (needRange x) (needRange y)
 
 -- | Messages for any form of duplicate binding:
 --
@@ -583,19 +563,19 @@ instance DuplicateError (Name PStage Values) (E.CaseBranch f Parse) where
 -- * lambda abstractions (not yet implemented)
 -- * type parameters
 -- * top-level function parameters
-instance DuplicateError a Pos where
-  duplicateError _ x y = errorDuplicateBind (needsRange x) (needsRange y)
+instance DuplicateError a SrcRange where
+  duplicateError _ x y = errorDuplicateBind (needRange x) (needRange y)
 
-errorMultipleDeclarations :: (R.HasRange a1, R.HasRange a2) => a1 -> a2 -> D.Diagnostic
-errorMultipleDeclarations (R.getRange -> r1) (R.getRange -> r2) =
+errorMultipleDeclarations :: (HasRange a1, HasRange a2) => a1 -> a2 -> D.Diagnostic
+errorMultipleDeclarations (getRange -> r1) (getRange -> r2) =
   D.err
     (max r1 r2)
     "duplicate declaration"
     "name is already defined in this module"
     & D.context (min r1 r2) "previous declaration"
 
-errorDuplicateBind :: (R.HasRange a1, R.HasRange a2) => a1 -> a2 -> D.Diagnostic
-errorDuplicateBind (R.getRange -> r1) (R.getRange -> r2) =
+errorDuplicateBind :: (HasRange a1, HasRange a2) => a1 -> a2 -> D.Diagnostic
+errorDuplicateBind (getRange -> r1) (getRange -> r2) =
   D.err
     (max r1 r2)
     "duplicate binding"
@@ -603,8 +583,8 @@ errorDuplicateBind (R.getRange -> r1) (R.getRange -> r2) =
     & D.context (min r1 r2) "previous binding"
 {-# NOINLINE errorDuplicateBind #-}
 
-errorDuplicateBranch :: (R.HasRange a1, R.HasRange a2) => a1 -> a2 -> D.Diagnostic
-errorDuplicateBranch (R.getRange -> r1) (R.getRange -> r2) =
+errorDuplicateBranch :: (HasRange a1, HasRange a2) => a1 -> a2 -> D.Diagnostic
+errorDuplicateBranch (getRange -> r1) (getRange -> r2) =
   D.err
     (max r1 r2)
     "duplicate case alternative"
@@ -648,7 +628,7 @@ errorRecNoTermLambda recLoc recExpr =
 
 errorMultipleWildcards ::
   E.CaseBranch Identity Parse -> E.CaseBranch Identity Parse -> D.Diagnostic
-errorMultipleWildcards (needsRange -> x) (needsRange -> y) =
+errorMultipleWildcards (needRange -> x) (needRange -> y) =
   D.err
     (min x y)
     "multiple wildcard branches in case expression"
@@ -667,17 +647,17 @@ errorMisplacedPairCon loc =
 {-# NOINLINE errorMisplacedPairCon #-}
 
 errorConflictingImports ::
-  R.SrcRange ->
+  SrcRange ->
   ImportKey ->
-  R.Located ImportBehaviour ->
-  R.Located ImportBehaviour ->
+  Located ImportBehaviour ->
+  Located ImportBehaviour ->
   D.Diagnostic
 errorConflictingImports importLoc (_scope, _name) i1 i2 =
   D.err importLoc "conflicting imports" "conflicting imports"
     & describe i1
     & describe i2
   where
-    describe (r R.:@ i) = D.context r case i of
+    describe (r :@ i) = D.context r case i of
       ImportHide -> "hidden here"
       ImportAsIs -> "imported here"
       ImportFrom _ -> "imported as a renaming here"
@@ -690,14 +670,14 @@ errorInvalidKind r = D.err r "invalid kind" "not one of the valid kinds"
 errorUnexpectedTokens :: [Token] -> ParseM a
 errorUnexpectedTokens [] = do
   -- Generate an empty range at the very end of the file.
-  end <- asks R.getEndLoc
-  fatalError $ D.err (R.SrcRange end end) "parse error" "unexpected end of file"
+  end <- asks getEndLoc
+  fatalError $ D.err (SrcRange end end) "parse error" "unexpected end of file"
 errorUnexpectedTokens (t : _) = do
-  fatalError $ D.err (R.getRange t) "parse error" "unexpected token"
+  fatalError $ D.err (getRange t) "parse error" "unexpected token"
 
-errorUnknownPragma :: Token -> Token -> R.SrcRange -> D.Diagnostic
+errorUnknownPragma :: Token -> Token -> SrcRange -> D.Diagnostic
 errorUnknownPragma pragmaStart pragmaEnd keywordRange =
   D.err pragmaRange "invalid pragma" "unknown pragma directive"
     & D.fix keywordRange "try ‘BENCHMARK’ or ‘BENCHMARK!’"
   where
-    pragmaRange = R.SrcRange (R.getStartLoc pragmaStart) (R.getEndLoc pragmaEnd)
+    pragmaRange = SrcRange (getStartLoc pragmaStart) (getEndLoc pragmaEnd)
