@@ -1,6 +1,8 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -14,7 +16,26 @@
 {-# LANGUAGE ViewPatterns #-}
 
 module AlgST.Parse.ParseUtils
-  ( -- * Parse monad
+  ( needsRange,
+
+    -- * Lexer Utilities
+
+    -- ** Alex definitions
+    AlexInput,
+    alexGetByte,
+    alexInputPrevChar,
+
+    -- ** Lexer actions
+    LexAction,
+    simpleToken,
+    textToken,
+    textToken',
+
+    -- ** Errors
+    invalidChar,
+    invalidUTF8,
+
+    -- * Parse monad
     ParseM,
     runParseM,
     UnscopedName (..),
@@ -36,6 +57,8 @@ module AlgST.Parse.ParseUtils
     errorMisplacedPairCon,
     errorDuplicateBind,
     errorInvalidKind,
+    errorUnexpectedTokens,
+    errorUnknownPragma,
 
     -- * Operators
     Parenthesized (..),
@@ -48,6 +71,7 @@ module AlgST.Parse.ParseUtils
     ModuleBuilder,
     BuilderState,
     runModuleBuilder,
+    liftModuleBuilder,
     moduleValueDecl,
     moduleValueBinding,
     moduleTypeDecl,
@@ -67,6 +91,7 @@ module AlgST.Parse.ParseUtils
 where
 
 import AlgST.Parse.Phase
+import AlgST.Parse.Token
 import AlgST.Syntax.Decl
 import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Module
@@ -74,31 +99,86 @@ import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
 import AlgST.Syntax.Pos
 import AlgST.Syntax.Tree qualified as T
-import AlgST.Util.ErrorMessage
+import AlgST.Util.Diagnose (DErrors)
+import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.Lenses qualified as L
 import AlgST.Util.SourceLocation (SrcRange)
-import AlgST.Util.SourceLocation qualified as R
+import AlgST.Util.SourceManager qualified as R
 import Control.Arrow
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Validate
-import Data.DList.DNonEmpty (DNonEmpty)
-import Data.DList.DNonEmpty qualified as DL
+import Data.ByteString (ByteString)
+import Data.ByteString qualified as BS
+import Data.CallStack (HasCallStack)
+import Data.DList.DNonEmpty qualified as DNE
 import Data.Either
 import Data.Function
 import Data.Functor.Identity
 import Data.HashMap.Strict qualified as HM
 import Data.HashSet (HashSet)
 import Data.HashSet qualified as HS
-import Data.List qualified as List
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Merge.Strict qualified as Merge
 import Data.Map.Strict qualified as Map
 import Data.Maybe
 import Data.Singletons
+import Data.Word
+import GHC.Foreign qualified as GHC
 import Lens.Family2 hiding ((&))
+import Numeric (showHex)
 import Numeric.Natural
+import System.IO qualified as IO
+import System.IO.Unsafe
+
+type LexAction = ByteString -> Either D.Diagnostic Token
+
+type AlexInput = ByteString
+
+alexGetByte :: AlexInput -> Maybe (Word8, AlexInput)
+alexGetByte = BS.uncons
+
+alexInputPrevChar :: AlexInput -> Char
+alexInputPrevChar = error "left context not implemented"
+{-# WARNING alexInputPrevChar "left context not implemented" #-}
+
+simpleToken :: (SrcRange -> Token) -> LexAction
+simpleToken f = Right . f . R.fullRange
+
+textToken :: (R.Located String -> Token) -> LexAction
+textToken = textToken' id
+
+textToken' :: (String -> a) -> (R.Located a -> Token) -> LexAction
+textToken' f g s = Right $ g $ R.fullRange s R.@- f decoded
+  where
+    decoded = unsafeDupablePerformIO do
+      BS.useAsCStringLen s (GHC.peekCStringLen IO.utf8)
+
+invalidChar :: LexAction
+invalidChar s = Left do
+  D.err
+    (R.fullRange s)
+    "invalid source character"
+    "skipping this character, trying to continue"
+
+-- | Emits an error about invalid UTF-8. We try to recover and return the
+-- remaining input.
+invalidUTF8 :: (MonadValidate D.DErrors m) => AlexInput -> m AlexInput
+invalidUTF8 s =
+  -- TODO: Implement recovery.
+  refute (pure err)
+  where
+    err =
+      D.err
+        (R.SizedRange (R.startLoc s) 1)
+        "invalid UTF-8"
+        ("unexpected byte 0x" ++ showByte (BS.head s))
+        & D.hint "I stopped reading the input file here."
+    showByte b =
+      "0x" ++ case showHex b "" of
+        hex@[_] -> '0' : hex
+        hex -> hex
 
 data ParsedModule = ParsedModule
   { parsedImports :: [Located (Import ModuleName)],
@@ -109,7 +189,7 @@ emptyParsedModule :: ParsedModule
 emptyParsedModule = ParsedModule [] emptyModule
 
 resolveImports ::
-  Applicative f =>
+  (Applicative f) =>
   (ModuleName -> f a) ->
   ParsedModule ->
   f [Located (Import (ModuleName, a))]
@@ -155,43 +235,44 @@ imsHiddenL :: Lens' ImportMergeState ImportHidden
 imsRenamedL :: Lens' ImportMergeState ImportRenamed
 {- ORMOLU_ENABLE -}
 
-type ParseM = Validate (DNonEmpty Diagnostic)
+type ParseM = ReaderT R.Buffer (Validate DErrors)
 
--- | Evaluates a value in the 'ParseM' monad producing a list of errors and
--- maybe a result.
-runParseM :: ParseM a -> Either (NonEmpty Diagnostic) a
-runParseM = mapErrors DL.toNonEmpty >>> runValidate
+-- | Evaluates a value in the 'ParseM' monad producing a list of errors.
+runParseM :: R.Buffer -> ParseM a -> Either D.Errors a
+runParseM buf =
+  flip runReaderT buf
+    >>> mapErrors DNE.toNonEmpty
+    >>> runValidate
 
 newtype UnscopedName = UName (forall scope. PName scope)
 
 scopeName :: UnscopedName -> PName scope
 scopeName (UName n) = n
 
-addError :: Pos -> [ErrorMessage] -> ParseM ()
-addError !p err = addErrors [PosError p err]
+addError :: D.Diagnostic -> ParseM ()
+addError !d = dispute (pure d)
 
-addErrors :: [Diagnostic] -> ParseM ()
+addErrors :: [D.Diagnostic] -> ParseM ()
 addErrors [] = pure ()
-addErrors (e : es) = dispute $ DL.fromNonEmpty $ e :| es
+addErrors (e : es) = dispute $ DNE.fromNonEmpty $ e :| es
 
-fatalError :: Diagnostic -> ParseM a
-fatalError = refute . DL.singleton
+fatalError :: D.Diagnostic -> ParseM a
+fatalError !d = refute (pure d)
 
 data Parenthesized
   = TopLevel
   | InParens
   deriving (Eq)
 
+needsRange :: (HasCallStack) => a -> SrcRange
+needsRange = error "needs a SrcRange"
+
 sectionsParenthesized :: Parenthesized -> OperatorSequence Parse -> ParseM PExp
 sectionsParenthesized TopLevel ops | Just op <- sectionOperator ops = do
-  addError
-    (pos op)
-    [ Error "Operator",
-      Error op,
-      Error "is missing an argument.",
-      ErrLine,
-      Error "Wrap it in parentheses for an operator section."
-    ]
+  addError $
+    D.err (needsRange op) "missing argument" "operator is missing an argument"
+      -- The range for the fix should include operator + the one argument we have
+      & D.fix (needsRange op) "wrap it in parentheses for an operator section"
   pure $ E.Exp $ Right ops
 sectionsParenthesized _ ops = do
   pure $ E.Exp $ Right ops
@@ -222,6 +303,9 @@ runModuleBuilder builder = evalStateT (buildModule emptyModule) builderState
         { builderCurValueDecl = Nothing,
           builderBenchmarkCount = 0
         }
+
+liftModuleBuilder :: ParseM () -> ModuleBuilder
+liftModuleBuilder m = Kleisli \p -> p <$ lift m
 
 completePrevious :: ModuleBuilder
 completePrevious = Kleisli \p -> do
@@ -261,11 +345,11 @@ moduleValueBinding valueName params e = Kleisli \p0 -> do
     -- If there is an incomplete definition which does not match the current
     -- variable, we have to add it to the "imported" signatures.
     if
-        | Just (prevName, _) <- mincomplete,
-          onUnL (/=) valueName prevName ->
-            runKleisli completePrevious p0
-        | otherwise ->
-            pure p0
+      | Just (prevName, _) <- mincomplete,
+        onUnL (/=) valueName prevName ->
+          runKleisli completePrevious p0
+      | otherwise ->
+          pure p0
 
   -- Re-read the incomplete binding, might be changed by the call to
   -- 'validateNotIncomplete' and remember that there is no incomplete binding
@@ -274,12 +358,11 @@ moduleValueBinding valueName params e = Kleisli \p0 -> do
   modify' \bst -> bst {builderCurValueDecl = Nothing}
   case mincomplete' of
     Nothing -> lift do
-      addError
-        (pos valueName)
-        [ Error "Binding of",
-          Error valueName,
-          Error "should be preceeded by its declaration."
-        ]
+      addError $
+        D.err
+          (needsRange valueName)
+          "missing declaration"
+          "binding should be preceeded by its declaration"
       pure p
     Just (defLoc :@ _, ty) -> lift do
       let decl =
@@ -295,7 +378,7 @@ moduleValueBinding valueName params e = Kleisli \p0 -> do
           (Right decl)
           (moduleValues p)
       when (unL valueName `Map.member` moduleSigs p) do
-        addErrors [uncurryL errorImportShadowed valueName]
+        addError $ errorImportShadowed (needsRange valueName)
       pure p {moduleValues = parsedValues'}
 
 moduleTypeDecl :: TypeVar PStage -> TypeDecl Parse -> ModuleBuilder
@@ -374,7 +457,7 @@ addImportItem stmtLoc ims ii@ImportItem {..} = case importBehaviour of
     | Just other <- HM.lookup (importKey ii) (imsRenamed ims),
       HS.member (importKey ii) (imsAsIs ims) ->
         -- Hiding once and importing as-is conflicts.
-        conflict $ other @- ImportAsIs
+        conflict $ needsRange other R.@- ImportAsIs
     | otherwise ->
         -- Hiding twice is alright (we might want to emit a warning). Hiding also
         -- explicitly allows some other identifier to reuse the name.
@@ -382,12 +465,12 @@ addImportItem stmtLoc ims ii@ImportItem {..} = case importBehaviour of
   ImportAsIs
     | Just hideLoc <- HM.lookup (importKey ii) (imsHidden ims) ->
         -- Hiding once and importing as-is conflicts.
-        conflict $ hideLoc @- ImportHide
+        conflict $ needsRange hideLoc R.@- ImportHide
     | Just (otherLoc :@ orig) <- HM.lookup (importKey ii) (imsRenamed ims),
       not $ HS.member (importKey ii) (imsAsIs ims) ->
         -- Importing once as-is and mapping another identifier to this name
         -- conflicts.
-        conflict $ otherLoc @- ImportFrom orig
+        conflict $ needsRange otherLoc R.@- ImportFrom orig
     | otherwise ->
         -- Importing twice as-is is alright (we might want to emit a warning).
         -- Remeber this import.
@@ -399,7 +482,7 @@ addImportItem stmtLoc ims ii@ImportItem {..} = case importBehaviour of
         -- Mapping another identifier to the same name conflicts, be it via an
         -- explicit rename or an as-is import.
         let isAsIs = HS.member (importKey ii) (imsAsIs ims)
-        conflict $ otherLoc @- if isAsIs then ImportAsIs else ImportFrom otherName
+        conflict $ needsRange otherLoc R.@- if isAsIs then ImportAsIs else ImportFrom otherName
     | otherwise ->
         -- An explicit hide is ok.
         ok $ imsRenamedL . L.hashAt (importKey ii) .~ Just (importLocation @- orig)
@@ -409,10 +492,10 @@ addImportItem stmtLoc ims ii@ImportItem {..} = case importBehaviour of
       ims
         <$ addErrors
           [ errorConflictingImports
-              stmtLoc
+              (needsRange stmtLoc)
               (importKey ii)
               other
-              (importLocation @- importBehaviour)
+              (needsRange importLocation R.@- importBehaviour)
           ]
 
 mergeImportAll :: Pos -> Pos -> [ImportItem] -> ParseM ImportSelection
@@ -466,11 +549,11 @@ mergeNoDuplicates m new =
       fatalError $ duplicateError k v1 v2
 
 class DuplicateError k a where
-  duplicateError :: k -> a -> a -> Diagnostic
+  duplicateError :: k -> a -> a -> D.Diagnostic
 
 -- | Message for duplicate type declarations.
 instance DuplicateError (Name PStage Types) (TypeDecl Parse) where
-  duplicateError = errorMultipleDeclarations
+  duplicateError _ x y = errorMultipleDeclarations (needsRange x) (needsRange y)
 
 -- | Message for a duplicated top-level value declaration. This includes both
 -- constrcutor names between two declarations, and top-level functions.
@@ -479,20 +562,20 @@ instance
     (Name PStage Values)
     (Either (ConstructorDecl Parse) (ValueDecl Parse))
   where
-  duplicateError = errorMultipleDeclarations
+  duplicateError _ x y = errorMultipleDeclarations (needsRange x) (needsRange y)
 
 instance DuplicateError (Name PStage Values) (SignatureDecl Parse) where
-  duplicateError = errorMultipleDeclarations
+  duplicateError _ x y = errorMultipleDeclarations (needsRange x) (needsRange y)
 
 -- | Message for a duplicated constructor inside a type declaration.
 instance DuplicateError (Name PStage Values) (Pos, [PType]) where
-  duplicateError v (p1, _) (p2, _) = errorMultipleDeclarations v p1 p2
+  duplicateError _ (p1, _) (p2, _) = errorMultipleDeclarations (needsRange p1) (needsRange p2)
 
 -- | Message for a duplicate branch in a case expression:
 --
 -- > case … of { A -> …, A -> … }
 instance DuplicateError (Name PStage Values) (E.CaseBranch f Parse) where
-  duplicateError = errorDuplicateBranch
+  duplicateError _ x y = errorDuplicateBranch (needsRange x) (needsRange y)
 
 -- | Messages for any form of duplicate binding:
 --
@@ -500,155 +583,121 @@ instance DuplicateError (Name PStage Values) (E.CaseBranch f Parse) where
 -- * lambda abstractions (not yet implemented)
 -- * type parameters
 -- * top-level function parameters
-instance ErrorMsg a => DuplicateError a Pos where
-  duplicateError = errorDuplicateBind
+instance DuplicateError a Pos where
+  duplicateError _ x y = errorDuplicateBind (needsRange x) (needsRange y)
 
-errorMultipleDeclarations ::
-  (ErrorMsg a, HasPos p1, HasPos p2) => a -> p1 -> p2 -> Diagnostic
-errorMultipleDeclarations a (pos -> p1) (pos -> p2) =
-  PosError
-    (max p1 p2)
-    [ Error "Multiple declarations of",
-      Error a,
-      ErrLine,
-      Error "Declared at:",
-      Error (min p1 p2),
-      ErrLine,
-      Error "            ",
-      Error (max p1 p2)
-    ]
+errorMultipleDeclarations :: (R.HasRange a1, R.HasRange a2) => a1 -> a2 -> D.Diagnostic
+errorMultipleDeclarations (R.getRange -> r1) (R.getRange -> r2) =
+  D.err
+    (max r1 r2)
+    "duplicate declaration"
+    "name is already defined in this module"
+    & D.context (min r1 r2) "previous declaration"
 
-errorDuplicateBind :: ErrorMsg v => v -> Pos -> Pos -> Diagnostic
-errorDuplicateBind name p1 p2 =
-  PosError
-    (min p1 p2)
-    [ Error "Conflicting bindings for",
-      Error name,
-      ErrLine,
-      Error "Bound at:",
-      Error (min p1 p2),
-      ErrLine,
-      Error "         ",
-      Error (max p1 p2)
-    ]
+errorDuplicateBind :: (R.HasRange a1, R.HasRange a2) => a1 -> a2 -> D.Diagnostic
+errorDuplicateBind (R.getRange -> r1) (R.getRange -> r2) =
+  D.err
+    (max r1 r2)
+    "duplicate binding"
+    "binding conflicts with previous binding of the same name"
+    & D.context (min r1 r2) "previous binding"
 {-# NOINLINE errorDuplicateBind #-}
 
-errorDuplicateBranch :: ProgVar PStage -> E.CaseBranch f x -> E.CaseBranch f x -> Diagnostic
-errorDuplicateBranch name (pos -> p1) (pos -> p2) =
-  PosError
-    (max p1 p2)
-    [ Error "Duplicate case alternative",
-      Error name,
-      ErrLine,
-      Error "Branches at:",
-      Error (min p1 p2),
-      ErrLine,
-      Error "            ",
-      Error (max p1 p2)
-    ]
+errorDuplicateBranch :: (R.HasRange a1, R.HasRange a2) => a1 -> a2 -> D.Diagnostic
+errorDuplicateBranch (R.getRange -> r1) (R.getRange -> r2) =
+  D.err
+    (max r1 r2)
+    "duplicate case alternative"
+    "case alternative already provided"
+    & D.context (min r1 r2) "previous location"
 
-errorImportShadowed :: Pos -> ProgVar PStage -> Diagnostic
-errorImportShadowed loc name =
-  PosError
-    loc
-    [ Error "Declaration of",
-      Error name,
-      Error "shadows an import/builtin of the same name."
-    ]
+-- TODO: Is this error message still up-to date? This "import/builtin shadowed"
+-- stuff feels outdated now that we have the module system.
+errorImportShadowed :: SrcRange -> D.Diagnostic
+errorImportShadowed range =
+  D.err
+    range
+    "import/builtin shadowed"
+    "declaration shadows import/builtin of the same name"
 {-# NOINLINE errorImportShadowed #-}
 
--- | An error message for when a lambda binds only type variables but uses the
--- linear arrow @-o@. This combination does not make sense, therefore we do not
--- allow it.
-errorNoTermLinLambda :: Pos -> Pos -> Diagnostic
-errorNoTermLinLambda lambdaLoc arrowLoc =
-  PosError
-    arrowLoc
-    [ Error "Lambda at",
-      Error lambdaLoc,
-      Error "binds only type variables.",
-      ErrLine,
-      Error "Use the unrestricted arrow ‘->’ for this case."
-    ]
+-- | An warning message for when a lambda binds only type variables but uses
+-- the linear arrow @-o@. This combination does not make sense, therefore we do
+-- not allow it.
+errorNoTermLinLambda :: SrcRange -> SrcRange -> D.Diagnostic
+errorNoTermLinLambda absRange arrRange =
+  D.warn arrRange "unnecessary linear arrow" "linear arrow does not make sense"
+    & D.context absRange "lambda abstraction binds only type variables"
+    & D.hint "Use an unrestricted arrow for this case."
 {-# NOINLINE errorNoTermLinLambda #-}
 
-errorRecNoTermLambda :: Pos -> Diagnostic
-errorRecNoTermLambda p = PosError p [Error msg1, ErrLine, Error msg2]
+errorRecNoTermLambda :: SrcRange -> SrcRange -> D.Diagnostic
+errorRecNoTermLambda recLoc recExpr =
+  D.err recExpr "invalid ‘rec’ expression" "invalid ‘rec’ right-hand side expression"
+    & D.context recLoc "‘rec’ expression started here"
+    & D.note note1
+    & D.note note2
   where
-    msg1 =
-      "• a ‘rec’ expression's right-hand side must consist of a \
-      \lambda abstraction."
-    msg2 =
-      "• a ‘rec’ expression must bind at least one non-type parameter in \
+    note1 =
+      "a ‘rec’ expression's right-hand side must consist of a lambda \
+      \abstraction."
+    note2 =
+      "a ‘rec’ expression must bind at least one non-type parameter in \
       \their right-hand side lambda abstraction."
 {-# NOINLINE errorRecNoTermLambda #-}
 
 errorMultipleWildcards ::
-  E.CaseBranch Identity Parse -> E.CaseBranch Identity Parse -> Diagnostic
-errorMultipleWildcards x y =
-  PosError
-    (pos b2)
-    [ Error "Multiple wildcards in case expression:",
-      Error $ runIdentity $ E.branchBinds b1,
-      Error $ runIdentity $ E.branchBinds b2,
-      ErrLine,
-      Error "Branches at:",
-      Error (pos b1),
-      ErrLine,
-      Error "            ",
-      Error (pos b2)
-    ]
-  where
-    (b1, b2) =
-      if pos x < pos y
-        then (x, y)
-        else (y, x)
+  E.CaseBranch Identity Parse -> E.CaseBranch Identity Parse -> D.Diagnostic
+errorMultipleWildcards (needsRange -> x) (needsRange -> y) =
+  D.err
+    (min x y)
+    "multiple wildcard branches in case expression"
+    "here is the first wildcard branch"
+    & D.context (max x y) "here is the second wildcard branch"
 
-errorMisplacedPairCon ::
-  forall (s :: Scope) proxy. SingI s => Pos -> proxy s -> Diagnostic
-errorMisplacedPairCon loc _ =
-  PosError
-    loc
-    [ Error "Pair constructor",
-      Error $ PairCon @s,
-      Error "cannot be used as",
-      Error . id @String $
-        eitherName @s
-          "a type constructor."
-          "an expression.",
-      ErrLine,
-      Error "It can only appear in patterns and with ‘select’."
-    ]
+errorMisplacedPairCon :: forall (s :: Scope). (SingI s) => SrcRange -> D.Diagnostic
+errorMisplacedPairCon loc =
+  D.err loc "misplaced pair constructor" msg
+    & D.hint "Use the ‘(…, …)’ form when outside of patterns and ‘select’"
+  where
+    msg =
+      eitherName @s @String
+        "cannot appear as a type constructor"
+        "cannot appear as an expression"
 {-# NOINLINE errorMisplacedPairCon #-}
 
 errorConflictingImports ::
-  Pos ->
+  R.SrcRange ->
   ImportKey ->
-  Located ImportBehaviour ->
-  Located ImportBehaviour ->
-  Diagnostic
-errorConflictingImports importLoc (scope, name) i1 i2 =
-  PosError (max (pos i1) (pos i2)) . List.intercalate [ErrLine] $
-    [ [ Error $
-          "Conflicting imports of" ++ case scope of
-            Types -> " type"
-            Values -> "",
-        Error name
-      ],
-      describe i1,
-      describe i2,
-      [Error "In import statement at", Error importLoc]
-    ]
+  R.Located ImportBehaviour ->
+  R.Located ImportBehaviour ->
+  D.Diagnostic
+errorConflictingImports importLoc (_scope, _name) i1 i2 =
+  D.err importLoc "conflicting imports" "conflicting imports"
+    & describe i1
+    & describe i2
   where
-    describe (p :@ i) = case i of
-      ImportHide ->
-        [Error "    hidden at", Error p]
-      ImportAsIs ->
-        [Error "    imported at", Error p]
-      ImportFrom orig ->
-        [Error "    renamed from", Error orig, Error "at", Error p]
+    describe (r R.:@ i) = D.context r case i of
+      ImportHide -> "hidden here"
+      ImportAsIs -> "imported here"
+      ImportFrom _ -> "imported as a renaming here"
 {-# NOINLINE errorConflictingImports #-}
 
-errorInvalidKind :: Pos -> String -> Diagnostic
-errorInvalidKind p s = PosError p [Error "Invalid kind", Error (Unqualified s)]
+errorInvalidKind :: SrcRange -> D.Diagnostic
+errorInvalidKind r = D.err r "invalid kind" "not one of the valid kinds"
 {-# NOINLINE errorInvalidKind #-}
+
+errorUnexpectedTokens :: [Token] -> ParseM a
+errorUnexpectedTokens [] = do
+  -- Generate an empty range at the very end of the file.
+  end <- asks R.getEndLoc
+  fatalError $ D.err (R.SrcRange end end) "parse error" "unexpected end of file"
+errorUnexpectedTokens (t : _) = do
+  fatalError $ D.err (R.getRange t) "parse error" "unexpected token"
+
+errorUnknownPragma :: Token -> Token -> R.SrcRange -> D.Diagnostic
+errorUnknownPragma pragmaStart pragmaEnd keywordRange =
+  D.err pragmaRange "invalid pragma" "unknown pragma directive"
+    & D.fix keywordRange "try ‘BENCHMARK’ or ‘BENCHMARK!’"
+  where
+    pragmaRange = R.SrcRange (R.getStartLoc pragmaStart) (R.getEndLoc pragmaEnd)

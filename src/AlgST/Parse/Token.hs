@@ -5,20 +5,12 @@
 module AlgST.Parse.Token where
 
 import AlgST.Syntax.Type (Polarity)
-import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.ErrorMessage
 import AlgST.Util.Output
 import AlgST.Util.SourceLocation
 import Control.Applicative
-import Data.ByteString (ByteString)
-import Data.ByteString qualified as BS
 import Data.DList qualified as DL
-import Data.Word
-import GHC.Foreign qualified as GHC
 import GHC.Generics (Generic (..))
-import Numeric
-import System.IO qualified as IO
-import System.IO.Unsafe
 
 data Token
 {- ORMOLU_DISABLE -}
@@ -136,19 +128,6 @@ instance ErrorMsg Token where
   msg = prettyToken
   msgStyling _ = redFGStyling
 
--- * Lexer support
-
-type LexAction = ByteString -> Either D.Diagnostic Token
-
-type AlexInput = ByteString
-
-alexGetByte :: AlexInput -> Maybe (Word8, AlexInput)
-alexGetByte = BS.uncons
-
-alexInputPrevChar :: AlexInput -> Char
-alexInputPrevChar = error "left context not implemented"
-{-# WARNING alexInputPrevChar "left context not implemented" #-}
-
 data TokenList = TokenList
   { tlToks :: DL.DList Token,
     tlNL :: Maybe Token
@@ -172,31 +151,3 @@ snocToken tl t =
       tlToks = tlToks tl `DL.append` foldMap DL.singleton (tlNL tl) `DL.snoc` t,
       tlNL = Nothing
     }
-
--- ** Lexer actions
-
-simpleToken :: (SrcRange -> Token) -> LexAction
-simpleToken f = Right . f . fullRange
-
-textToken :: (Located String -> Token) -> LexAction
-textToken = textToken' id
-
-textToken' :: (String -> a) -> (Located a -> Token) -> LexAction
-textToken' f g s = Right $ g $ fullRange s @- f decoded
-  where
-    decoded = unsafeDupablePerformIO do
-      BS.useAsCStringLen s (GHC.peekCStringLen IO.utf8)
-
-invalidChar :: LexAction
-invalidChar s = Left do
-  D.err
-    (fullRange s)
-    "invalid source character"
-    "skipping this character, trying to continue"
-
-invalidUTF8 :: AlexInput -> D.Diagnostic
-invalidUTF8 s =
-  D.err
-    (SizedRange (startLoc s) 1)
-    "invalid UTF-8"
-    ("unexpected byte 0x" ++ showHex (BS.head s) "")

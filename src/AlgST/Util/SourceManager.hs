@@ -8,8 +8,6 @@ module AlgST.Util.SourceManager
 
     -- * Buffers
     Buffer (..),
-    bufferStart,
-    bufferRange,
     decodeBuffer,
 
     -- * Handling multiple buffers
@@ -71,11 +69,8 @@ instance Show Buffer where
       . shows (bufferName b)
       . showsPrec 11 (fullRange (bufferContents b))
 
-bufferStart :: Buffer -> SrcLoc
-bufferStart = startLoc . bufferContents
-
-bufferRange :: Buffer -> SrcRange
-bufferRange = fullRange . bufferContents
+instance HasRange Buffer where
+  getRange = fullRange . bufferContents
 
 -- | Decodes the UTF-8 encoded 'bufferContents' to a 'String'.
 decodeBuffer :: Buffer -> String
@@ -152,7 +147,7 @@ managedBuffers (SourceManager bs) = bs
 
 insertBuffer :: Buffer -> SourceManager -> SourceManager
 insertBuffer b (SourceManager bufList) = do
-  let (xs, ys) = splitBufList (bufferStart b) bufList
+  let (xs, ys) = splitBufList (getStartLoc b) bufList
   SourceManager (xs <> Seq.singleton b <> ys)
 
 insertStdin :: String -> SourceManager -> IO (Buffer, SourceManager)
@@ -179,7 +174,7 @@ insertBufferIO name readContents manager = do
   pure (b, manager')
 
 splitBufList :: SrcLoc -> Seq Buffer -> (Seq Buffer, Seq Buffer)
-splitBufList !loc = lowerBound \b -> bufferStart b < loc
+splitBufList !loc = lowerBound \b -> getStartLoc b < loc
 
 -- | Splits a 'Seq' according to some predicate. It assumes that the sequence
 -- is sorted according to the predicate.

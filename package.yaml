@@ -36,6 +36,7 @@ dependencies:
 - monad-validate
 - mtl
 - optparse-applicative
+- profunctors
 - scheduler
 - semialign
 - singletons-th

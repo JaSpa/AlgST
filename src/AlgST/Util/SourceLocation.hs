@@ -18,6 +18,7 @@ module AlgST.Util.SourceLocation
 
     -- * Ranges
     SrcRange (SizedRange, NullRange, ..),
+    runion,
     rangeByteCount,
     unsafeRangeString,
 
@@ -47,6 +48,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Internal (ByteString (..))
 import Data.Coerce
 import Data.Hashable
+import Data.Semigroup
 import Data.Void
 import Data.Word
 import Foreign
@@ -105,6 +107,13 @@ pattern SizedRange start size <-
     SizedRange start size = SrcRange start (start `advanceLoc` size)
 
 {-# COMPLETE SizedRange #-}
+
+instance Semigroup SrcRange where
+  SrcRange s1 e1 <> SrcRange s2 e2 = SrcRange (min s1 s2) (max e1 e2)
+  stimes = stimesIdempotent
+
+runion :: (HasRange a, HasRange b) => a -> b -> SrcRange
+runion a b = getRange a <> getRange b
 
 -- | This instance is only meant for debugging purposes. The output
 -- unconditionally contains colorizing escape sequences (see the @Show

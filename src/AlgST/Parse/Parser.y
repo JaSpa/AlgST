@@ -9,7 +9,7 @@
 {-# LANGUAGE TypeApplications #-}
 module AlgST.Parse.Parser
   ( -- * Parsers
-    Parser
+    Parser(..)
   , parseModule
   , parseDecls
   , parseImports
@@ -32,6 +32,8 @@ module AlgST.Parse.Parser
   ) where
 
 import           Control.Category              ((>>>), (<<<))
+import qualified Control.Foldl                 as L
+import qualified Control.Foldl.NonEmpty        as L1
 import           Control.Monad
 import           Control.Monad.State
 import           Control.Monad.Trans.Maybe
@@ -39,6 +41,7 @@ import           Data.Bifunctor
 import qualified Data.DList                    as DL
 import qualified Data.DList.DNonEmpty          (DNonEmpty)
 import qualified Data.DList.DNonEmpty          as DNE
+import           Data.Either
 import           Data.Foldable
 import           Data.Functor
 import           Data.Functor.Identity
@@ -47,6 +50,7 @@ import           Data.List.NonEmpty            (NonEmpty(..))
 import qualified Data.Map.Strict               as Map
 import           Data.Maybe
 import           Data.Monoid
+import           Data.Profunctor
 import           Data.Proxy
 import           Data.Sequence                 (Seq(..))
 import qualified Data.Sequence                 as Seq
@@ -77,8 +81,8 @@ import           AlgST.Util.ErrorMessage
 %name parseExpr_    Exp
 
 %tokentype { Token }
-%error { parseError }
-%monad { ParseM } { (>>=) } { return }
+%error { errorUnexpectedTokens }
+%monad { ParseM }
 
 %token
   nl       { TokenNL        _ }
@@ -221,16 +225,15 @@ ImportScope :: { SrcRange -> Located Scope }
 -- Pragmas
 -------------------------------------------------------------------------------
 
-PragmaBenchmark :: { () }
-  : UPPER_ID {% do
+PragmaBenchmark :: { Token -> Token -> ModuleBuilder }
+  : UPPER_ID { \pragmaStart pragmaEnd -> liftModuleBuilder do
       when (unL $1 /= "BENCHMARK") do
-        let msg = "Unknown pragma ‘" ++ unL $1 ++ "’, expected ‘BENCHMARK’"
-        addError (pos $1) [Error msg]
+        addErrors [errorUnknownPragma pragmaStart pragmaEnd (getRange $1)]
     }
 
 Pragma :: { ModuleBuilder }
   : '{-#' PragmaBenchmark opt('!') opt(STR) TypeAtom opt(nl) TypeAtom opt(nl) '#-}' {
-      insertBenchmark Benchmark
+      $2 $1 $9 >>> insertBenchmark Benchmark
         { benchName   = foldMap unL $4
         , benchExpect = isNothing $3
         , benchT1     = $5
@@ -238,7 +241,7 @@ Pragma :: { ModuleBuilder }
         }
     }
   | '{-#' PragmaBenchmark opt('!') opt(STR) nl Type nl Type opt(nl) '#-}' {
-      insertBenchmark Benchmark
+      $2 $1 $10 >>> insertBenchmark Benchmark
         { benchName   = foldMap unL $4
         , benchExpect = isNothing $3
         , benchT1     = $6
@@ -345,7 +348,7 @@ EAtom :: { PExp }
   | CHAR                           { E.Lit (pos $1) $ E.Char   (unL $1) }
   | STR                            { E.Lit (pos $1) $ E.String (unL $1) }
   | '()'                           { E.Lit (pos $1) E.Unit }
-  | '(,)'                          {% fatalError $ errorMisplacedPairCon @Values (pos $1) Proxy }
+  | '(,)'                          {% fatalError $ errorMisplacedPairCon @Values (getRange $1) }
   | ProgVar                        { Pos.uncurryL E.Var (mapLoc $1) }
   | Constructor                    { Pos.uncurryL E.Con (mapLoc $1) }
   | '(' ExpInner ')'               {% $2 InParens }
@@ -409,7 +412,7 @@ RecExp :: { forall a. (Pos -> ProgVar PStage -> PType -> E.RecLam Parse -> a) ->
   : rec ProgVar TySig '=' Exp {
       \f -> case $5 of
         E.RecAbs r -> pure $ f (pos $1) (unL $2) $3 r
-        _ -> fatalError $ errorRecNoTermLambda (pos $5)
+        _ -> fatalError $ errorRecNoTermLambda (getRange $1) (needsRange $5)
     }
 
 LetBind :: { Pos -> PExp -> PExp -> PExp }
@@ -418,38 +421,36 @@ LetBind :: { Pos -> PExp -> PExp -> PExp }
 
 LamExp :: { PExp }
   : lambda Abs Arrow Exp {% do
-      let (build, Any anyTermAbs) = $2
-      let (arrPos, arrMul) = $3
+      let (build, anyTermAbs, absRange) = $2
+      let (arrRange, arrMul) = $3
       when (arrMul == K.Lin && not anyTermAbs) do
-        addErrors [errorNoTermLinLambda (pos $1) arrPos]
-      pure $ appEndo (build (pos $1) arrMul) $4
+        addErrors [errorNoTermLinLambda ($1 `runion` absRange) arrRange]
+      pure $ appEndo (build (getRange $1) arrMul) $4
     }
 
-Abs :: { (Pos -> K.Multiplicity -> Endo PExp, Any) }
+-- Parses a non empty list of bindings for a lambda abstraction. Returns
+--
+-- 1. A function to build a nested abstraction from the arguments
+--      (a) location of the lambda
+--          TODO: rethink this when the AST has proper ranges!
+--      (b) multiplicity of the lambda
+-- 2. A Bool indicating if there were any actual value bindings
+-- 3. A range containing all the bindings
+Abs :: { (SrcRange -> K.Multiplicity -> Endo PExp, Bool, SrcRange) }
   : bindings1(Abs1) {% do
-      let extract :: 
-            Located (Either (ProgVar PStage, Maybe PType) (TypeVar PStage, K.Kind))
-            -> Maybe (Located (Either (ProgVar PStage) (TypeVar PStage)))
-          extract = \case
-            p :@ Left (v, _)  | not (isWild v) -> Just (p @- Left v)
-            p :@ Right (v, _) | not (isWild v) -> Just (p @- Right v)
-            _ -> Nothing
-      binds <- $1 extract
---    binds <- $1 $ \case
---          p :@ Left (v, _)  | not (isWild v) -> Just (p @- Left v)
---          p :@ Right (v, _) | not (isWild v) -> Just (p @- Right v)
---          _ -> Nothing
-      let termAbs argLoc (v, t) =
-            ( \lamLoc m -> Endo $ E.Abs @Parse lamLoc . E.Bind argLoc m v t
-            , Any True
-            )
-      let typeAbs argLoc (v, k) =
-            ( \lamLoc _ -> Endo $ E.TypeAbs @Parse lamLoc . K.Bind argLoc v k
-            , Any False
-            )
-      let build loc abs =
-            either (termAbs loc) (typeAbs loc) abs
-      pure $ foldMap (uncurryL (build . pos)) binds
+      binds <- $1 $ \case
+        p :@ Left (v, _)  | not (isWild v) -> Just (p @- Left v)
+        p :@ Right (v, _) | not (isWild v) -> Just (p @- Right v)
+        _ -> Nothing
+      let mkVAbs argRange (v, t) lamLoc m =
+            Endo $ E.Abs @Parse (pos lamLoc) . E.Bind (pos argRange) m v t
+      let mkTAbs argRange (v, k) lamLoc _ =
+            Endo $ E.TypeAbs @Parse (pos lamLoc) . K.Bind (pos argRange) v k
+      let f1 = pure (,,)
+            <*> lmap (\(r :@ arg) -> either (mkVAbs r) (mkTAbs r) arg) L1.sconcat
+            <*> L1.fromFold (L.any (isLeft . unL))
+            <*> lmap getRange L1.sconcat 
+      pure $ L1.fold1 f1 binds
     }
 
 Abs1 :: { Located (Either (ProgVar PStage, Maybe PType) (TypeVar PStage, K.Kind)) } 
@@ -497,7 +498,7 @@ Pattern :: { (Located (ProgVar PStage), [Located (ProgVar PStage)]) }
   | '(,)' ProgVarWildSeq                  { ($1 @- PairCon, $2) }
   | '(' ProgVarWild ',' ProgVarWild ')'   {% do
       when (onUnL (==) $2 $4 && not (foldL isWild $2)) do
-        addErrors [errorDuplicateBind (unL $2) (pos $2) (pos $4)]
+        addErrors [errorDuplicateBind (getRange $2) (getRange $4)]
       pure ($1 @- PairCon, [$2, $4])
     }
 
@@ -553,7 +554,7 @@ ProtocolSubset :: { T.ProtocolSubset Written }
 
 TypeAtom :: { PType }
   : '()'                          { T.Unit (pos $1) }
-  | '(,)'                         {% fatalError $ errorMisplacedPairCon @Types (pos $1) Proxy }
+  | '(,)'                         {% fatalError $ errorMisplacedPairCon @Types (getRange $1) }
   | '(' Type ',' TupleType ')'    { T.Pair (pos $1) $2 $4 }
   | end                           { Pos.uncurryL T.End (mapLoc $1) }
   | TypeVar                       { Pos.uncurryL T.Var (mapLoc $1) }
@@ -577,7 +578,7 @@ Type4 :: { PType }
 
 Type5 :: { PType }
   : Type4                         { $1 }
-  | Type4 Arrow Type5             { uncurry T.Arrow $2 $1 $3 }
+  | Type4 Arrow Type5             { uncurry T.Arrow (first pos $2) $1 $3 }
   | Forall Type5                  { $1 $2 }
 
 Type :: { PType }
@@ -593,9 +594,9 @@ TupleType :: { PType }
   : Type               { $1 }
   | Type ',' TupleType { T.Pair (pos $1) $1 $3 }
 
-Arrow :: { (Pos, K.Multiplicity) }
-  : '->' { (pos $1, K.Un) }
-  | '-o' { (pos $1, K.Lin) }
+Arrow :: { (SrcRange, K.Multiplicity) }
+  : '->' { (getRange $1, K.Un) }
+  | '-o' { (getRange $1, K.Lin) }
 
 Polarity :: { (Pos, T.Polarity) }
   : '!' { (pos $1, T.Out) }
@@ -618,7 +619,7 @@ Kind :: { Located K.Kind }
   : UPPER_ID {%
       case reads (unL $1) of
         [(k, "")] -> pure $ $1 @- k
-        _ -> $1 @- K.TU <$ addErrors [Pos.uncurryL errorInvalidKind (mapLoc $1)]
+        _ -> $1 @- K.TU <$ addErrors [errorInvalidKind (getRange $1)]
     }
 
 
@@ -764,23 +765,18 @@ feedParser :: Parser a -> String -> ParseM a
 feedParser = flip lexer
 
 runParser :: Parser a -> String -> Either Errors a
-runParser parser = runParseM . feedParser parser
+runParser parser = undefined -- runParseM . feedParser parser
 
 -- | Runs a parser with the contents of the provided file. This function may
 -- throw for all of the reasons 'readFile' may throw.
 runParserIO :: Parser a -> FilePath -> IO (Either Errors a)
-runParserIO parser file = runParser parser <$> readFile file
+runParserIO parser file = undefined -- runParser parser <$> readFile file
 
 -- | Runs a parser from on the given input string, returning either the
 -- rendered errors (mode 'Plain') or the successfull result.
 runParserSimple :: Parser a -> String -> Either String a
-runParserSimple p = first (renderErrors Plain "" . toList) . runParser p
+runParserSimple p = undefined -- first (renderErrors Plain "" . toList) . runParser p
 
 lexer :: String -> Parser a -> ParseM a
 lexer str (Parser f) = undefined -- either fatalError f $ scanTokens str
-
-parseError :: [Token] -> ParseM a
-parseError = fatalError <<< \case
-  [] -> unlocatedError [Error "Unexpected end of file."]
-  t:_ -> PosError (pos t) [Error "Unexpected token", Error t]
 }
