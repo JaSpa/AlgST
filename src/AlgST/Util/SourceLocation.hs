@@ -51,10 +51,12 @@ where
 import AlgST.Syntax.Pos qualified as P
 import AlgST.Util
 import AlgST.Util.Generically
+import Control.Foldl.NonEmpty qualified as L1
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal (ByteString (..))
 import Data.Coerce
 import Data.Hashable
+import Data.Profunctor
 import Data.Semigroup
 import Data.Void
 import Data.Word
@@ -99,7 +101,7 @@ coloredPtr p =
 advanceLoc :: SrcLoc -> Int -> SrcLoc
 advanceLoc = coerce plusPtr
 
-data SrcRange = SrcRange {rangeStart, rangeEnd :: !SrcLoc}
+data SrcRange = SrcRange !SrcLoc !SrcLoc
   deriving stock (Eq, Ord, Generic, Lift)
 
 -- | A range of size zero, located at 'NullLoc'.
@@ -109,14 +111,21 @@ pattern NullRange = SrcRange NullLoc NullLoc
 -- | Constructs or deconstructs a 'SrcRange' from a start location and a size.
 pattern SizedRange :: SrcLoc -> Int -> SrcRange
 pattern SizedRange start size <-
-  ((,) <$> rangeStart <*> rangeByteCount -> (!start, !size))
+  ((,) <$> getStartLoc <*> rangeByteCount -> (!start, !size))
   where
     SizedRange start size = SrcRange start (start `advanceLoc` size)
 
 {-# COMPLETE SizedRange #-}
 
 instance Semigroup SrcRange where
-  SrcRange s1 e1 <> SrcRange s2 e2 = SrcRange (min s1 s2) (max e1 e2)
+  SrcRange s1 e1 <> SrcRange s2 e2 =
+    SrcRange (min s1 s2) (max e1 e2)
+
+  sconcat = L1.fold1 do
+    SrcRange
+      <$> lmap getStartLoc L1.minimum
+      <*> lmap getEndLoc L1.maximum
+
   stimes = stimesIdempotent
 
 runion :: (HasRange a, HasRange b) => a -> b -> SrcRange
@@ -139,7 +148,7 @@ instance Hashable SrcRange
 
 -- | Counts the number of bytes included in the range.
 rangeByteCount :: SrcRange -> Int
-rangeByteCount r = locPtr (rangeEnd r) `minusPtr` locPtr (rangeStart r)
+rangeByteCount r = locPtr (getEndLoc r) `minusPtr` locPtr (getStartLoc r)
 
 startLoc :: ByteString -> SrcLoc
 startLoc = SrcLoc . unsafeBasePtr
@@ -149,7 +158,7 @@ fullRange bs = SrcRange (startLoc bs) (startLoc bs `advanceLoc` BS.length bs)
 
 unsafeRangeString :: SrcRange -> String
 unsafeRangeString r = unsafeDupablePerformIO do
-  GHC.peekCStringLen IO.utf8 (castPtr (locPtr (rangeStart r)), rangeByteCount r)
+  GHC.peekCStringLen IO.utf8 (castPtr (locPtr (getStartLoc r)), rangeByteCount r)
 
 unsafeBasePtr :: ByteString -> Ptr Word8
 unsafeBasePtr (PS fp offset _) = unsafeForeignPtrToPtr fp `plusPtr` offset
@@ -161,10 +170,10 @@ class HasRange a where
   getRange a = SrcRange (getStartLoc a) (getEndLoc a)
 
   getStartLoc :: a -> SrcLoc
-  getStartLoc = rangeStart . getRange
+  getStartLoc (getRange -> SrcRange x _) = x
 
   getEndLoc :: a -> SrcLoc
-  getEndLoc = rangeEnd . getRange
+  getEndLoc (getRange -> SrcRange _ x) = x
 
 instance HasRange SrcRange where
   getRange = id

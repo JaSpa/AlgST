@@ -112,7 +112,7 @@ endPosition bs = (ln, col)
 
 diagnoseSrcRange :: SourceManager -> SrcRange -> Diagnose.Position
 diagnoseSrcRange mgr range = fromMaybe fallbackLocation do
-  (fp, (prefix, suffix)) <- findContainingBuffer mgr (rangeStart range)
+  (fp, (prefix, suffix)) <- findContainingBuffer mgr (getStartLoc range)
   let (!sln, !scol) = endPosition prefix
   let (eln, ecol) = endPosition $ BS.take (rangeByteCount range) suffix
   let !eln' = sln + eln - 1
