@@ -114,6 +114,9 @@ import Lens.Family2
 import Lens.Family2.State.Strict
 import Lens.Family2.Stock (at')
 
+needPParams :: Params x -> [(Located (Name stage Types), K.Kind)]
+needPParams = undefined
+
 -- | Translates the typechecker specific error set representation into a simple
 -- list.
 runErrors :: Errors -> DErrors
@@ -265,14 +268,14 @@ checkTypeDecl name = \case
   DataDecl origin decl -> do
     -- New data declarations are allowed to be TL or TU.
     let allowed = K.TL :| [K.TU]
-    kind <- expectNominalKind (pos origin) "data" name (nominalKind decl) allowed
+    kind <- expectNominalKind (R.needPos origin) "data" name (nominalKind decl) allowed
     tcConstructors <- local (bindParams (nominalParams decl)) do
-      traverseConstructors (checkDataCon kind) (first R.needPos <$> nominalConstructors decl)
+      traverseConstructors (checkDataCon kind) (nominalConstructors decl)
     pure $ Just $ DataDecl origin decl {nominalConstructors = first R.needRange <$> tcConstructors}
   ProtoDecl origin decl -> do
-    _ <- expectNominalKind (pos origin) "protocol" name (nominalKind decl) (K.P :| [])
+    _ <- expectNominalKind (R.needPos origin) "protocol" name (nominalKind decl) (K.P :| [])
     tcConstructors <- local (bindParams (nominalParams decl)) do
-      traverseConstructors (const checkProtoCon) (first R.needPos <$> nominalConstructors decl)
+      traverseConstructors (const checkProtoCon) (nominalConstructors decl)
     pure $ Just $ ProtoDecl origin decl {nominalConstructors = first R.needRange <$> tcConstructors}
   where
     checkDataCon k _name field =
@@ -283,7 +286,7 @@ checkTypeDecl name = \case
 
 typeConstructorsFromDecls :: TypesMap Rn -> TcNameMap Types TypeCon
 typeConstructorsFromDecls = fmap \case
-  AliasDecl x ta -> LazyAlias (pos x) ta
+  AliasDecl x ta -> LazyAlias (R.needPos x) ta
   DataDecl _ tn -> mkNominal tn
   ProtoDecl _ tn -> mkNominal tn
   where
@@ -427,7 +430,7 @@ checkValueBodies embed = Map.traverseMaybeWithKey \_name -> \case
     pure $ Just $ Left condecl
   ValueGlobal (Just ValueDecl {..}) ty -> do
     -- Align the binds with the values type and check the body.
-    body <- embed $ checkAlignedBinds ty valueParams valueBody
+    body <- embed $ checkAlignedBinds ty (R.needPLoc <$> valueParams) valueBody
     pure $ Just $ Right ValueDecl {valueType = ty, valueBody = body, ..}
   ValueGlobal Nothing _ -> do
     -- Non-global values are not possible on this level.
@@ -533,7 +536,7 @@ zipTypeParams ::
   Params TcStage ->
   [RnType] ->
   TcM env st [(TypeVar TcStage, TcType)]
-zipTypeParams loc name ps0 ts0 = go 0 ps0 ts0
+zipTypeParams loc name ps0 ts0 = go 0 (needPParams ps0) ts0
   where
     go !_ [] [] = pure []
     go !n ((_ :@ v, k) : ps) (a : as) =
@@ -555,7 +558,7 @@ zipTypeParams loc name ps0 ts0 = go 0 ps0 ts0
 typeRefSubstitutions :: TypeDecl Tc -> TypeRef -> Substitutions Tc
 typeRefSubstitutions decl ref =
   typeSubstitions . Map.fromList $
-    zip (unL . fst <$> declParams decl) (typeRefArgs ref)
+    zip (R.unL . fst <$> declParams decl) (typeRefArgs ref)
 
 -- | Applies a substitution to a 'TypeDecl'.
 --
@@ -568,7 +571,7 @@ substituteTypeConstructors subs = nomDecl >>> substituteConstructors
       DataDecl _ d -> d
       ProtoDecl _ d -> d
     substituteConstructors nom =
-      mapConstructors (const $ applySubstitutions subs) (first R.needPos <$> nominalConstructors nom)
+      mapConstructors (const $ applySubstitutions subs) (nominalConstructors nom)
 
 kisynth ::
   (HasKiEnv env, HasKiSt st) =>
@@ -812,7 +815,7 @@ tysynth =
       v2 <- freshLocal "b"
       let tyX = T.Var @Tc (p @- kiX)
           kiX = K.TL
-      let params = [(p :@ v1, kiX), (p :@ v2, kiX)]
+      let params = [(R.needRange p R.:@ v1, kiX), (R.needRange p R.:@ v2, kiX)]
           pairTy = T.Pair ZeroPos (tyX v1) (tyX v2)
       ty <- buildSelectType p params pairTy [tyX v1, tyX v2]
       pure (E.Select p lcon, ty)
@@ -852,7 +855,7 @@ buildSelectType p params t us = do
   varS <- freshLocal "s"
   let tyS = T.Var @Tc (p @- kiS) varS
       kiS = K.SL
-  let foralls = buildForallType params . buildForallType [(p :@ varS, kiS)]
+  let foralls = buildForallType params . buildForallType [(R.needRange p R.:@ varS, kiS)]
   let arrLhs = buildSessionType ZeroPos T.Out [t]
       arrRhs = buildSessionType ZeroPos T.Out us
   let ty = foralls $ T.Arrow p K.Un (arrLhs tyS) (arrRhs tyS)
@@ -938,7 +941,7 @@ instantiateDeclRef p name decl = do
           typeRefKind = tcDeclKind decl,
           typeRefExcl = mempty,
           typeRefPos = p,
-          typeRefArgs = (\(p :@ tv, k) -> T.Var (p @- k) tv) <$> params
+          typeRefArgs = (\(p :@ tv, k) -> T.Var (p @- k) tv) <$> needPParams params
         }
     )
 
@@ -1019,7 +1022,7 @@ checkDataCase loc cases patTy mExpectedTy =
 -- | Combines a list of @('TypeVar', 'K.Kind')@ pairs into a nested 'T.Forall'
 -- type.
 buildForallType :: Params TcStage -> TcType -> TcType
-buildForallType = foldMap (Endo . mkForall) >>> appEndo
+buildForallType = needPParams >>> foldMap (Endo . mkForall) >>> appEndo
   where
     mkForall :: (Located (TypeVar TcStage), K.Kind) -> TcType -> TcType
     mkForall (p :@ tv, k) = T.Forall ZeroPos . K.Bind p tv k
@@ -1528,7 +1531,7 @@ bindTyVars vars = kiEnvL . tcKindEnvL <>~ varMap
     varMap = foldl' (\m (v, k) -> Map.insert v k m) Map.empty vars
 
 bindParams :: (HasKiEnv env) => Params TcStage -> env -> env
-bindParams = bindTyVars . fmap (first unL)
+bindParams = bindTyVars . fmap (first R.unL)
 
 errorIf :: (MonadValidate Errors m) => Bool -> Diagnostic -> m ()
 errorIf True e = Error.add e

@@ -18,6 +18,7 @@ import AlgST.Syntax.Phases
 import AlgST.Syntax.Traversal
 import AlgST.Syntax.Tree
 import AlgST.Syntax.Type qualified as T
+import AlgST.Util.SourceLocation (SrcRange)
 import Data.Functor.Const
 import Data.Functor.Identity
 import Data.Void
@@ -192,9 +193,9 @@ type instance T.XNegate  Tc = Pos
 type instance T.XType    Tc = TypeRef
 
 type instance D.XAliasDecl    Tc = Void  -- Type aliases have been expanded after type checking.
-type instance D.XDataDecl     Tc = Pos
-type instance D.XProtocolDecl Tc = Pos
+type instance D.XDataDecl     Tc = SrcRange
+type instance D.XProtocolDecl Tc = SrcRange
 
-type instance D.XDataCon      Tc = Pos
-type instance D.XProtoCon     Tc = Pos
+type instance D.XDataCon      Tc = SrcRange
+type instance D.XProtoCon     Tc = SrcRange
 {- ORMOLU_ENABLE -}

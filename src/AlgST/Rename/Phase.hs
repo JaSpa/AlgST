@@ -15,6 +15,7 @@ import AlgST.Syntax.Name
 import AlgST.Syntax.Phases
 import AlgST.Syntax.Pos
 import AlgST.Syntax.Type qualified as T
+import AlgST.Util.SourceLocation (SrcRange)
 import Data.Void
 
 -- | Type level tag for renamed syntax elements.
@@ -65,10 +66,10 @@ type instance T.XDualof  Rn = Pos
 type instance T.XNegate  Rn = Pos
 type instance T.XType    Rn = Void
 
-type instance D.XAliasDecl    Rn = Pos
-type instance D.XDataDecl     Rn = Pos
-type instance D.XProtocolDecl Rn = Pos
+type instance D.XAliasDecl    Rn = SrcRange
+type instance D.XDataDecl     Rn = SrcRange
+type instance D.XProtocolDecl Rn = SrcRange
 
-type instance D.XDataCon      Rn = Pos
-type instance D.XProtoCon     Rn = Pos
+type instance D.XDataCon      Rn = SrcRange
+type instance D.XProtoCon     Rn = SrcRange
 {- ORMOLU_ENABLE -}

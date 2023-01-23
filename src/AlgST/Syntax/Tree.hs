@@ -25,9 +25,9 @@ import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Module
 import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
-import AlgST.Syntax.Pos
+import AlgST.Syntax.Pos qualified as P
 import AlgST.Syntax.Type qualified as T
-import AlgST.Util.SourceLocation qualified as L
+import AlgST.Util.SourceLocation
 import Control.Category ((>>>))
 import Control.Monad
 import Data.Foldable
@@ -67,14 +67,17 @@ instance (LabeledTree a) => LabeledTree [a] where
   labeledTree = pure . tree "" . map labeledTree
 
 -- | @Pos@ values are ignored. They are not part of the tree visualization.
-instance LabeledTree Pos where
+instance LabeledTree P.Pos where
   labeledTree _ = []
+
+instance LabeledTree SrcRange where
+  labeledTree _ = []
+
+instance (LabeledTree a) => LabeledTree (P.Located a) where
+  labeledTree = labeledTree . P.unL
 
 instance (LabeledTree a) => LabeledTree (Located a) where
   labeledTree = labeledTree . unL
-
-instance LabeledTree a => LabeledTree (L.Located a) where
-  labeledTree = labeledTree . L.unL
 
 instance LabeledTree K.Kind where
   labeledTree = pure . leaf . show
@@ -134,7 +137,7 @@ instance (T.ForallX LabeledTree x, E.ForallX LabeledTree x) => LabeledTree (E.Ex
           ]
       E.PatLet x c vs e1 e2 ->
         tree
-          ("Exp.PatLet " ++ unwords (describeName . unL <$> c : vs))
+          ("Exp.PatLet " ++ unwords (describeName . P.unL <$> c : vs))
           [ labeledTree x,
             labeledTree e1,
             labeledTree e2
@@ -148,7 +151,7 @@ instance (T.ForallX LabeledTree x, E.ForallX LabeledTree x) => LabeledTree (E.Ex
           ]
       E.New x t ->
         tree "Exp.New" [labeledTree x, labeledTree t]
-      E.Select x (_ :@ c) ->
+      E.Select x (_ P.:@ c) ->
         tree ("Exp.Select " ++ describeName c) [labeledTree x]
       E.Fork x e ->
         tree "Exp.Fork" [labeledTree x, labeledTree e]
@@ -355,7 +358,7 @@ instance LabeledTree ImportSelection where
         HM.keys >>> List.sort >>> fmap \(s, n) ->
           leaf $ unwords ["hide", scope s, name n]
       renamed =
-        HM.toList >>> List.sortBy (comparing fst) >>> fmap \((s, n), _ :@ o) ->
+        HM.toList >>> List.sortBy (comparing fst) >>> fmap \((s, n), _ P.:@ o) ->
           leaf $ unwords ["use", scope s, name o, "as", name n]
       scope = \case
         Values -> "value"
@@ -383,13 +386,13 @@ fieldMapTree m = conCases ++ wildCases
   where
     conCases =
       labeledMapTree
-        (\v b -> unwords [describeName x | _ :@ x <- ZeroPos :@ v : toList (E.branchBinds b)])
+        (\v b -> unwords [describeName x | _ P.:@ x <- P.ZeroPos P.:@ v : toList (E.branchBinds b)])
         (\_ b -> labeledTree $ E.branchExp b)
         (E.casesPatterns m)
     wildCases =
       [ Node (describeName x) (labeledTree e)
       | E.CaseBranch
-          { branchBinds = Identity (_ :@ x),
+          { branchBinds = Identity (_ P.:@ x),
             branchExp = e
           } <-
           toList (E.casesWildcard m)

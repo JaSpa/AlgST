@@ -20,6 +20,7 @@ import AlgST.Syntax.Phases
 import AlgST.Syntax.Traversal
 import AlgST.Syntax.Tree
 import AlgST.Syntax.Type qualified as T
+import AlgST.Util.SourceLocation (SrcRange)
 import Data.Void
 import Language.Haskell.TH.Syntax (Lift)
 
@@ -97,10 +98,10 @@ type instance T.XDualof  Parse = Pos
 type instance T.XNegate  Parse = Pos
 type instance T.XType    Parse = Void
 
-type instance D.XAliasDecl    Parse = Pos
-type instance D.XDataDecl     Parse = Pos
-type instance D.XProtocolDecl Parse = Pos
+type instance D.XAliasDecl    Parse = SrcRange
+type instance D.XDataDecl     Parse = SrcRange
+type instance D.XProtocolDecl Parse = SrcRange
 
-type instance D.XDataCon      Parse = Pos
-type instance D.XProtoCon     Parse = Pos
+type instance D.XDataCon      Parse = SrcRange
+type instance D.XProtoCon     Parse = SrcRange
 {- ORMOLU_ENABLE -}

@@ -59,6 +59,7 @@ import AlgST.Util
 import AlgST.Util.ErrorMessage (DErrors)
 import AlgST.Util.Lenses
 import AlgST.Util.Lenses qualified as L
+import AlgST.Util.SourceLocation (needPos)
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Validate
@@ -284,7 +285,8 @@ continueRename baseMap moduleName m =
 moduleTopLevels :: ModuleMap -> PModule -> Fresh (ModuleMap, RenameEnv)
 moduleTopLevels baseMap m = do
   let entry ::
-        (SingI scope, HasPos a) =>
+        -- (SingI scope, HasRange a) =>
+        (SingI scope) =>
         NameW scope ->
         a ->
         Fresh ((Unqualified, NameR scope), PartialResolve scope)
@@ -296,7 +298,7 @@ moduleTopLevels baseMap m = do
           Just n -> pure n
         pure
           ( (nameUnqualified nameW, nameR),
-            resolvedUnique nameR $ Error.AmbiguousDefine $ pos decl
+            resolvedUnique nameR $ Error.AmbiguousDefine $ needPos decl
           )
   typs <- Map.traverseWithKey entry $ moduleTypes m
   vals <- Map.traverseWithKey entry $ moduleValues m

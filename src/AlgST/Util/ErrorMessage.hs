@@ -27,6 +27,7 @@ import AlgST.Syntax.Name
 import AlgST.Syntax.Pos
 import AlgST.Syntax.Type qualified as T
 import AlgST.Util.Output
+import AlgST.Util.SourceLocation qualified as R
 import Data.Coerce
 import Data.DList qualified as DL
 import Data.DList.DNonEmpty (DNonEmpty)
@@ -94,6 +95,10 @@ instance HasPos Diagnostic where
 instance ErrorMsg a => ErrorMsg (Located a) where
   msg = msg . unL
   msgStyling = msgStyling . unL
+
+instance ErrorMsg a => ErrorMsg (R.Located a) where
+  msg = msg . R.unL
+  msgStyling = msgStyling . R.unL
 
 instance Unparse (T.XType x) => ErrorMsg (T.Type x) where
   msg = show

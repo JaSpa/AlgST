@@ -16,10 +16,9 @@ module AlgST.Syntax.Decl where
 import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Name
-import AlgST.Syntax.Phases
+import AlgST.Syntax.Phases hiding (Located)
 import AlgST.Syntax.Type qualified as T
-import AlgST.Util.SourceLocation (SrcRange)
-import AlgST.Util.SourceLocation qualified as R
+import AlgST.Util.SourceLocation as R
 import Data.Functor.Identity
 import Data.Kind qualified as Hs
 import Data.Map.Strict qualified as Map
@@ -62,7 +61,7 @@ deriving stock instance (T.ForallX Lift x) => Lift (TypeAlias x)
 data TypeNominal stage c = TypeNominal
   { nominalParams :: Params stage,
     nominalKind :: K.Kind,
-    nominalConstructors :: RConstructors stage c
+    nominalConstructors :: Constructors stage c
   }
   deriving (Lift)
 
@@ -70,9 +69,7 @@ type Params stage = [(Located (Name stage Types), K.Kind)]
 
 type XParams x = Params (XStage x)
 
-type Constructors stage a = NameMapG stage Values (Pos, [a])
-
-type RConstructors stage a = NameMapG stage Values (SrcRange, [a])
+type Constructors stage a = NameMapG stage Values (SrcRange, [a])
 
 mapConstructors ::
   (ProgVar stage -> a -> b) ->
@@ -100,7 +97,7 @@ declParams = \case
 
 declConstructors ::
   forall x.
-  (XDataCon x ~ Pos, XProtoCon x ~ Pos) =>
+  (XDataCon x ~ SrcRange, XProtoCon x ~ SrcRange) =>
   XTypeVar x ->
   TypeDecl x ->
   NameMapG (XStage x) Values (ConstructorDecl x)
@@ -113,30 +110,30 @@ declConstructors name d = case d of
     -- So the only way to get 'Nothing' here is when the user annotated the
     -- declaration to have kind 'P' which will lead to an erorr diagnosis.
     let mul = K.Un `fromMaybe` K.multiplicity (nominalKind decl)
-    let con (r, items) = DataCon @x (R.needPos r) name (declParams d) mul items
+    let con (r, items) = DataCon @x r name (declParams d) mul items
     Map.map con (nominalConstructors decl)
   ProtoDecl _ decl -> do
-    let con (r, items) = ProtocolCon @x (R.needPos r) name (declParams d) items
+    let con (r, items) = ProtocolCon @x r name (declParams d) items
     Map.map con (nominalConstructors decl)
 
-instance ForallDeclX HasPos x => HasPos (TypeDecl x) where
-  pos = \case
-    AliasDecl x _ -> pos x
-    DataDecl x _ -> pos x
-    ProtoDecl x _ -> pos x
+instance ForallDeclX HasRange x => HasRange (TypeDecl x) where
+  getRange = \case
+    AliasDecl x _ -> getRange x
+    DataDecl x _ -> getRange x
+    ProtoDecl x _ -> getRange x
 
 data SignatureDecl x = SignatureDecl
-  { signaturePos :: Pos,
+  { signaturePos :: SrcRange,
     signatureType :: T.Type x
   }
 
 deriving stock instance (T.ForallX Lift x) => Lift (SignatureDecl x)
 
-instance HasPos (SignatureDecl x) where
-  pos = signaturePos
+instance HasRange (SignatureDecl x) where
+  getRange = signaturePos
 
 data ValueDecl x = ValueDecl
-  { valuePos :: Pos,
+  { valuePos :: SrcRange,
     valueType :: T.Type x,
     valueParams :: [Located (ANameG (XStage x))],
     valueBody :: E.Exp x
@@ -144,8 +141,8 @@ data ValueDecl x = ValueDecl
 
 deriving stock instance (E.ForallX Lift x, T.ForallX Lift x) => Lift (ValueDecl x)
 
-instance HasPos (ValueDecl x) where
-  pos = valuePos
+instance HasRange (ValueDecl x) where
+  getRange = valuePos
 
 valueSignatureDecl :: ValueDecl x -> SignatureDecl x
 valueSignatureDecl = SignatureDecl <$> valuePos <*> valueType
@@ -182,7 +179,7 @@ conItems = \case
   DataCon _ _ _ _ ts -> ts
   ProtocolCon _ _ _ ts -> ts
 
-instance ForallConX HasPos x => HasPos (ConstructorDecl x) where
-  pos = \case
-    DataCon x _ _ _ _ -> pos x
-    ProtocolCon x _ _ _ -> pos x
+instance ForallConX HasRange x => HasRange (ConstructorDecl x) where
+  getRange = \case
+    DataCon x _ _ _ _ -> getRange x
+    ProtocolCon x _ _ _ -> getRange x

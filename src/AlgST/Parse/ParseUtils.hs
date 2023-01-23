@@ -291,7 +291,7 @@ completePrevious = Kleisli \p -> do
       pure p
     Just (loc :@ name, sig) -> do
       put $! bst {builderCurValueDecl = Nothing}
-      let decl = SignatureDecl (needPos loc) sig
+      let decl = SignatureDecl loc sig
       sigs <- lift $ insertNoDuplicates name decl (moduleSigs p)
       pure p {moduleSigs = sigs}
 
@@ -343,9 +343,9 @@ moduleValueBinding valueName params e = Kleisli \p0 -> do
     Just (defLoc :@ _, ty) -> lift do
       let decl =
             ValueDecl
-              { valuePos = needPos defLoc,
+              { valuePos = defLoc,
                 valueType = ty,
-                valueParams = needPLoc <$> params,
+                valueParams = params,
                 valueBody = e
               }
       parsedValues' <-

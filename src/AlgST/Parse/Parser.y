@@ -51,6 +51,7 @@ import           Data.Maybe
 import           Data.Monoid
 import           Data.Profunctor
 import           Data.Proxy
+import           Data.Semigroup                (Semigroup(..))
 import           Data.Sequence                 (Seq(..))
 import qualified Data.Sequence                 as Seq
 import           AlgST.Builtins.Names
@@ -271,42 +272,50 @@ Decl :: { ModuleBuilder }
       moduleValueBinding $1 $2 $4
     }
   -- Type abbreviation
-  | type KindedTVar TypeParams '=' Type {% do
-      let (name, mkind) = $2
-      let decl = AliasDecl (needPos $1) TypeAlias
-            { aliasParams = fmap (first needPLoc) $3
+  | type KindedTVar TypeParams '=' Type { do
+      let (nameRange, name, mkind) = $2
+      let !range = sconcat $
+            getRange $1 :| nameRange : fmap (getRange . fst) $3 
+      let decl = AliasDecl range TypeAlias
+            { aliasParams = $3
             , aliasKind = mkind
             , aliasType = $5
             }
-      pure $ moduleTypeDecl (unL name) decl
+      moduleTypeDecl name decl
     }
   -- Datatype declaration
-  | data KindedTVar TypeParams {% do
-      let (name, mkind) = $2
-      let decl = DataDecl (needPos $1) TypeNominal
-            { nominalParams = fmap (first needPLoc) $3
+  | data KindedTVar TypeParams { do
+      let (nameRange, name, mkind) = $2
+      let !range = sconcat $
+            getRange $1 :| nameRange : fmap (getRange . fst) $3 
+      let decl = DataDecl range TypeNominal
+            { nominalParams = $3
             , nominalKind = K.TU `fromMaybe` mkind
             , nominalConstructors = mempty
             }
-      pure $ moduleTypeDecl (unL name) decl
+      moduleTypeDecl name decl
     }
-  | data KindedTVar TypeParams '=' DataCons {% do
-      let (name, mkind) = $2
-      let decl = DataDecl (needPos $1) TypeNominal
-            { nominalParams = fmap (first needPLoc) $3
+  | data KindedTVar TypeParams '=' DataCons { do
+      let (nameRange, name, mkind) = $2
+      let !range = sconcat $
+            getRange $1 :| nameRange : fmap (getRange . fst) $3 
+      let decl = DataDecl range TypeNominal
+            { nominalParams = $3
             , nominalKind = K.TU `fromMaybe` mkind
             , nominalConstructors = $5
             }
-      pure $ moduleTypeDecl (unL name) decl
+      moduleTypeDecl name decl
     }
-  | protocol KindedTVar TypeParams '=' DataCons {% do
-      let (name, mkind) = $2
-      let decl = ProtoDecl (needPos $1) TypeNominal
-            { nominalParams = fmap (first needPLoc) $3
+  | protocol KindedTVar TypeParams '=' DataCons { do
+      let (nameRange, name, mkind) = $2
+      let !range = sconcat $
+            getRange $1 :| nameRange : fmap (getRange . fst) $3 
+      let decl = ProtoDecl range TypeNominal
+            { nominalParams = $3
             , nominalKind = K.P `fromMaybe` mkind
             , nominalConstructors = $5
             }
-      pure $ moduleTypeDecl (unL name) decl
+      moduleTypeDecl name decl
     }
 
 TySig :: { PType }
@@ -320,7 +329,7 @@ TypeParams :: { [(Located (TypeVar PStage), K.Kind)] }
 TypeParams1 :: { NonEmpty (Located (TypeVar PStage), K.Kind) }
   : bindings1(KindBind) {% $1 \(locName, _) -> Identity locName }
 
-DataCons :: { RConstructors PStage PType }
+DataCons :: { Constructors PStage PType }
   : DataCon              {  uncurry Map.singleton $1 }
   | '|' DataCon          {  uncurry Map.singleton $2 }
   | DataCons '|' DataCon {% uncurry insertNoDuplicates $3 $1 }
@@ -683,9 +692,9 @@ KindBind :: { (Located (TypeVar PStage), K.Kind) }
   | '(' TypeVar ')'           { ($2, K.TU) }
   | TypeVar                   { ($1, K.TU) }
 
-KindedTVar :: { (Located (TypeVar PStage), Maybe K.Kind) }
-  : TypeName ':' Kind { ($1, Just (unL $3)) }
-  | TypeName          { ($1, Nothing) }
+KindedTVar :: { (SrcRange,  TypeVar PStage, Maybe K.Kind) }
+  : TypeName ':' Kind { ($1 `runion` $3, unL $1, Just (unL $3)) }
+  | TypeName          { (getRange $1, unL $1, Nothing) }
 
 -- wildcard(v) : v ~ Located s => Located (Name s)
 wildcard(v)
