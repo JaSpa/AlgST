@@ -358,7 +358,7 @@ instance LabeledTree ImportSelection where
         HM.keys >>> List.sort >>> fmap \(s, n) ->
           leaf $ unwords ["hide", scope s, name n]
       renamed =
-        HM.toList >>> List.sortBy (comparing fst) >>> fmap \((s, n), _ P.:@ o) ->
+        HM.toList >>> List.sortBy (comparing fst) >>> fmap \((s, n), _ :@ o) ->
           leaf $ unwords ["use", scope s, name o, "as", name n]
       scope = \case
         Values -> "value"

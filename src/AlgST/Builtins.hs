@@ -20,6 +20,7 @@ import AlgST.Syntax.Name
 import AlgST.Syntax.Pos
 import AlgST.Typing qualified as Tc
 import AlgST.Typing.Phase (TcModule)
+import AlgST.Util.SourceLocation (SrcRange (..))
 
 builtinsModule :: TcModule
 builtinsModuleMap :: ModuleMap
@@ -119,7 +120,7 @@ builtinsImport =
   Import
     { importTarget = (BuiltinsModule, builtinsModuleMap),
       importQualifier = emptyModuleName,
-      importSelection = ImportAll ZeroPos mempty mempty
+      importSelection = ImportAll NullRange mempty mempty
     }
 
 builtinsEnv :: RenameEnv

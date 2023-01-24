@@ -94,7 +94,6 @@ import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Module
 import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
-import AlgST.Syntax.Pos qualified as P
 import AlgST.Syntax.Tree qualified as T
 import AlgST.Util.Diagnose (DErrors)
 import AlgST.Util.Diagnose qualified as D
@@ -336,7 +335,7 @@ moduleValueBinding valueName params e = Kleisli \p0 -> do
     Nothing -> lift do
       addError $
         D.err
-          (needRange valueName)
+          (getRange valueName)
           "missing declaration"
           "binding should be preceeded by its declaration"
       pure p
@@ -354,7 +353,7 @@ moduleValueBinding valueName params e = Kleisli \p0 -> do
           (Right decl)
           (moduleValues p)
       when (unL valueName `Map.member` moduleSigs p) do
-        addError $ errorImportShadowed (needRange valueName)
+        addError $ errorImportShadowed (getRange valueName)
       pure p {moduleValues = parsedValues'}
 
 moduleTypeDecl :: TypeVar PStage -> TypeDecl Parse -> ModuleBuilder
@@ -436,36 +435,36 @@ addImportItem importStmtRange ims ii@ImportItem {..} = case importBehaviour of
     | Just other <- HM.lookup (importKey ii) (imsRenamed ims),
       HS.member (importKey ii) (imsAsIs ims) ->
         -- Hiding once and importing as-is conflicts.
-        conflict $ needRange other @- ImportAsIs
+        conflict $ other @- ImportAsIs
     | otherwise -> ok do
         -- Hiding twice is alright (we might want to emit a warning). Hiding also
         -- explicitly allows some other identifier to reuse the name.
-        imsHiddenL . L.hashAt (importKey ii) .~ Just (needPos importItemRange)
+        imsHiddenL . L.hashAt (importKey ii) .~ Just importItemRange
   ImportAsIs
     | Just hideLoc <- HM.lookup (importKey ii) (imsHidden ims) ->
         -- Hiding once and importing as-is conflicts.
-        conflict $ needRange hideLoc @- ImportHide
-    | Just (otherLoc P.:@ orig) <- HM.lookup (importKey ii) (imsRenamed ims),
+        conflict $ hideLoc @- ImportHide
+    | Just (otherLoc :@ orig) <- HM.lookup (importKey ii) (imsRenamed ims),
       not $ HS.member (importKey ii) (imsAsIs ims) ->
         -- Importing once as-is and mapping another identifier to this name
         -- conflicts.
-        conflict $ needRange otherLoc @- ImportFrom orig
+        conflict $ otherLoc @- ImportFrom orig
     | otherwise -> ok do
         -- Importing twice as-is is alright (we might want to emit a warning).
         -- Remeber this import.
         imsAsIsL %~ HS.insert (importKey ii)
           >>> imsRenamedL . L.hashAt (importKey ii)
-            .~ Just (needPos importItemRange P.@- importIdent)
+            .~ Just (importItemRange @- importIdent)
   ImportFrom orig
-    | Just (otherLoc P.:@ otherName) <- HM.lookup (importKey ii) (imsRenamed ims) -> do
+    | Just (otherLoc :@ otherName) <- HM.lookup (importKey ii) (imsRenamed ims) -> do
         -- Mapping another identifier to the same name conflicts, be it via an
         -- explicit rename or an as-is import.
         let isAsIs = HS.member (importKey ii) (imsAsIs ims)
-        conflict $ needRange otherLoc @- if isAsIs then ImportAsIs else ImportFrom otherName
+        conflict $ otherLoc @- if isAsIs then ImportAsIs else ImportFrom otherName
     | otherwise -> ok do
         -- An explicit hide is ok.
         imsRenamedL . L.hashAt (importKey ii)
-          .~ Just (needPos importItemRange P.@- orig)
+          .~ Just (importItemRange @- orig)
   where
     ok f = pure (f ims)
     conflict other =
@@ -492,10 +491,10 @@ mergeImportAll stmtRange allRange =
       -- hides.
       let allHidden =
             HM.foldlWithKey'
-              (\hm (scope, _) (_ P.:@ u) -> HM.insertWith const (scope, u) P.ZeroPos hm)
+              (\hm (scope, _) (_ :@ u) -> HM.insertWith const (scope, u) NullRange hm)
               (imsHidden ims)
               (imsRenamed ims)
-      ImportAll (needPos allRange) allHidden (imsRenamed ims)
+      ImportAll allRange allHidden (imsRenamed ims)
 
 mergeImportOnly :: SrcRange -> [ImportItem] -> ParseM ImportSelection
 mergeImportOnly stmtRange =
@@ -533,7 +532,7 @@ class DuplicateError k a where
 
 -- | Message for duplicate type declarations.
 instance DuplicateError (Name PStage Types) (TypeDecl Parse) where
-  duplicateError _ x y = errorMultipleDeclarations (needRange x) (needRange y)
+  duplicateError _ = errorMultipleDeclarations
 
 -- | Message for a duplicated top-level value declaration. This includes both
 -- constrcutor names between two declarations, and top-level functions.
@@ -542,14 +541,14 @@ instance
     (Name PStage Values)
     (Either (ConstructorDecl Parse) (ValueDecl Parse))
   where
-  duplicateError _ x y = errorMultipleDeclarations (needRange x) (needRange y)
+  duplicateError _ = errorMultipleDeclarations
 
 instance DuplicateError (Name PStage Values) (SignatureDecl Parse) where
-  duplicateError _ x y = errorMultipleDeclarations (needRange x) (needRange y)
+  duplicateError _ = errorMultipleDeclarations
 
 -- | Message for a duplicated constructor inside a type declaration.
 instance DuplicateError (Name PStage Values) (SrcRange, [PType]) where
-  duplicateError _ (p1, _) (p2, _) = errorMultipleDeclarations (needRange p1) (needRange p2)
+  duplicateError _ (r1, _) (r2, _) = errorMultipleDeclarations r1 r2
 
 -- | Message for a duplicate branch in a case expression:
 --
@@ -564,7 +563,7 @@ instance DuplicateError (Name PStage Values) (E.CaseBranch f Parse) where
 -- * type parameters
 -- * top-level function parameters
 instance DuplicateError a SrcRange where
-  duplicateError _ x y = errorDuplicateBind (needRange x) (needRange y)
+  duplicateError _ = errorDuplicateBind
 
 errorMultipleDeclarations :: (HasRange a1, HasRange a2) => a1 -> a2 -> D.Diagnostic
 errorMultipleDeclarations (getRange -> r1) (getRange -> r2) =

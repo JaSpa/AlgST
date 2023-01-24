@@ -188,8 +188,8 @@ Import :: { Located (Import ModuleName) }
 ImportList :: { SrcRange -> ParseM ImportSelection }
   -- The optional `nl` tokens allow the closing parenthesis to appear on a new
   -- line in column 0.
-  : {- empty -}                       { \ir -> pure $ ImportAll (needPos ir) mempty mempty }
-  | '(*)'                             { const $ pure $ ImportAll (needPos $1) mempty mempty }
+  : {- empty -}                       { \ir -> pure $ ImportAll ir mempty mempty }
+  | '(*)'                             { const $ pure $ ImportAll (getRange $1) mempty mempty }
   | '()'                              { const $ pure $ ImportOnly mempty }
   | '(' opt(nl) ')'                   { const $ pure $ ImportOnly mempty }
   -- Extend the range to include the closing parenthesis (and with this the
@@ -202,7 +202,7 @@ ImportSelection :: { SrcRange -> ParseM ImportSelection }
   | '*' ',' ImportItems opt(',')
     { \stmtRange -> mergeImportAll stmtRange (getRange $1) (DL.toList $3) }
   | '*' opt(',')
-    { \_ -> pure $ ImportAll (needPos $1) mempty mempty }
+    { \_ -> pure $ ImportAll $1 mempty mempty }
 
 ImportItems :: { DL.DList ImportItem }
   : ImportItem                        { DL.singleton $1 }

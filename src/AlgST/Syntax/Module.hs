@@ -33,8 +33,9 @@ where
 import AlgST.Syntax.Decl qualified as D
 import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Name
-import AlgST.Syntax.Phases
+import AlgST.Syntax.Phases hiding (Located)
 import AlgST.Syntax.Type qualified as T
+import AlgST.Util.SourceLocation
 import Data.HashMap.Strict (HashMap)
 import Data.Map.Strict qualified as Map
 import Data.Semigroup
@@ -78,7 +79,7 @@ data ImportSelection
     -- The set contains the hidden identifiers. The hidden identifiers include
     -- all renamed identifiers. The map contains renamed identifiers. The map's
     -- keys are the new names.
-    ImportAll !Pos !ImportHidden !ImportRenamed
+    ImportAll !SrcRange !ImportHidden !ImportRenamed
   | -- | Import only the names specified, potentially renaming imported
     -- identifiers.
     --
@@ -90,7 +91,7 @@ data ImportSelection
 
 type ImportKey = (Scope, Unqualified)
 
-type ImportHidden = HashMap ImportKey Pos
+type ImportHidden = HashMap ImportKey SrcRange
 
 type ImportRenamed = HashMap ImportKey (Located Unqualified)
 

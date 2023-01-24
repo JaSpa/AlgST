@@ -60,6 +60,7 @@ import AlgST.Util.ErrorMessage (DErrors)
 import AlgST.Util.Lenses
 import AlgST.Util.Lenses qualified as L
 import AlgST.Util.SourceLocation (needPos)
+import AlgST.Util.SourceLocation qualified as R
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Validate
@@ -102,7 +103,7 @@ importedRenameEnv stmt =
   case foldL importSelection stmt of
     ImportAll allLoc hides renames -> do
       -- The allSet contains all identifiers which are not hidden.
-      let allSet = allItems allLoc \itemKey -> not $ HM.member itemKey hides
+      let allSet = allItems (R.needPos allLoc) \itemKey -> not $ HM.member itemKey hides
       -- Add all the renamed items on top of the `allSet`.
       getAp $ pure allSet <> HM.foldMapWithKey (coerce addItem) renames
     ImportOnly renames ->
@@ -131,8 +132,8 @@ importedRenameEnv stmt =
           mkBindings = HM.foldMapWithKey item $ importMap ^. scopeL . _TopLevels
       RenameEnv {rnTyVars = mkBindings, rnProgVars = mkBindings}
 
-    addItem :: ImportKey -> Located Unqualified -> m RenameEnv
-    addItem (scope, nameHere) item@(_ :@ nameThere) = withSomeSing scope \sscope -> do
+    addItem :: ImportKey -> R.Located Unqualified -> m RenameEnv
+    addItem (scope, nameHere) item@(_ R.:@ nameThere) = withSomeSing scope \sscope -> do
       let resolvedItem =
             importMap
               ^. scopeL' sscope
@@ -143,12 +144,12 @@ importedRenameEnv stmt =
               (pos stmt)
               (foldL (fst . importTarget) stmt)
               scope
-              item
+              (R.needPLoc item)
       case resolvedItem of
         Nothing -> do
           mempty <$ addError unknownItemErr
         Just nameThereR -> do
-          let binding = singleBinding (pos item) nameHere nameThereR
+          let binding = singleBinding (needPos item) nameHere nameThereR
           pure $ mempty & scopeL' sscope .~ binding
 
 -- | A simplified version of 'importedRenameEnv' which does no renaming and no
