@@ -20,10 +20,18 @@ module AlgST.Util.Diagnose
     hint,
 
     -- * Rendering
+
+    -- ** Creating the @diagnose@ representation
     buildSorted,
     addSorted,
     onlyFiles,
     addBuffer,
+
+    -- ** Rendering the @diagnose@ values
+    E.prettyDiagnostic,
+    E.printDiagnostic,
+    E.WithUnicode (..),
+    E.TabSize (..),
   )
 where
 

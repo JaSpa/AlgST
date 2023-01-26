@@ -16,26 +16,11 @@
 {-# LANGUAGE ViewPatterns #-}
 
 module AlgST.Parse.ParseUtils
-  ( -- * Lexer Utilities
-
-    -- ** Alex definitions
-    AlexInput,
-    alexGetByte,
-    alexInputPrevChar,
-
-    -- ** Lexer actions
-    LexAction,
-    simpleToken,
-    textToken,
-    textToken',
-
-    -- ** Errors
-    invalidChar,
-    invalidUTF8,
-
-    -- * Parse monad
-    ParseM,
-    runParseM,
+  ( -- * Parse monad
+    Parser (..),
+    runParser,
+    scanToken,
+    LexFn (..),
     UnscopedName (..),
     scopeName,
     ParsedModule (..),
@@ -87,6 +72,8 @@ module AlgST.Parse.ParseUtils
   )
 where
 
+import AlgST.Parse.Lexer
+import AlgST.Parse.LexerUtils
 import AlgST.Parse.Phase
 import AlgST.Parse.Token
 import AlgST.Syntax.Decl
@@ -95,15 +82,16 @@ import AlgST.Syntax.Module
 import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
 import AlgST.Syntax.Tree qualified as T
-import AlgST.Util.Diagnose (DErrors)
 import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.Lenses qualified as L
 import AlgST.Util.SourceManager
-import Control.Arrow
+import Control.Arrow (Kleisli (..), (>>>))
 import Control.Monad
+import Control.Monad.Eta
 import Control.Monad.Reader
-import Control.Monad.State
+import Control.Monad.State.Strict
 import Control.Monad.Validate
+import Data.Bifunctor
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.DList.DNonEmpty qualified as DNE
@@ -117,61 +105,8 @@ import Data.Map.Merge.Strict qualified as Merge
 import Data.Map.Strict qualified as Map
 import Data.Maybe
 import Data.Singletons
-import Data.Word
-import GHC.Foreign qualified as GHC
 import Lens.Family2 hiding ((&))
-import Numeric (showHex)
 import Numeric.Natural
-import System.IO qualified as IO
-import System.IO.Unsafe
-
-type LexAction = ByteString -> Either D.Diagnostic Token
-
-type AlexInput = ByteString
-
-alexGetByte :: AlexInput -> Maybe (Word8, AlexInput)
-alexGetByte = BS.uncons
-
-alexInputPrevChar :: AlexInput -> Char
-alexInputPrevChar = error "left context not implemented"
-{-# WARNING alexInputPrevChar "left context not implemented" #-}
-
-simpleToken :: (SrcRange -> Token) -> LexAction
-simpleToken f = Right . f . fullRange
-
-textToken :: (Located String -> Token) -> LexAction
-textToken = textToken' id
-
-textToken' :: (String -> a) -> (Located a -> Token) -> LexAction
-textToken' f g s = Right $ g $ fullRange s @- f decoded
-  where
-    decoded = unsafeDupablePerformIO do
-      BS.useAsCStringLen s (GHC.peekCStringLen IO.utf8)
-
-invalidChar :: LexAction
-invalidChar s = Left do
-  D.err
-    (fullRange s)
-    "invalid source character"
-    "skipping this character, trying to continue"
-
--- | Emits an error about invalid UTF-8. We try to recover and return the
--- remaining input.
-invalidUTF8 :: (MonadValidate D.DErrors m) => AlexInput -> m AlexInput
-invalidUTF8 s =
-  -- TODO: Implement recovery.
-  refute (pure err)
-  where
-    err =
-      D.err
-        (SizedRange (startLoc s) 1)
-        "invalid UTF-8"
-        ("unexpected byte 0x" ++ showByte (BS.head s))
-        & D.hint "I stopped reading the input file here."
-    showByte b =
-      "0x" ++ case showHex b "" of
-        hex@[_] -> '0' : hex
-        hex -> hex
 
 data ParsedModule = ParsedModule
   { parsedImports :: [Located (Import ModuleName)],
@@ -213,28 +148,19 @@ imsHiddenL :: Lens' ImportMergeState ImportHidden
 imsRenamedL :: Lens' ImportMergeState ImportRenamed
 {- ORMOLU_ENABLE -}
 
-type ParseM = ReaderT Buffer (Validate DErrors)
-
--- | Evaluates a value in the 'ParseM' monad producing a list of errors.
-runParseM :: Buffer -> ParseM a -> Either D.Errors a
-runParseM buf =
-  flip runReaderT buf
-    >>> mapErrors DNE.toNonEmpty
-    >>> runValidate
-
 newtype UnscopedName = UName (forall scope. PName scope)
 
 scopeName :: UnscopedName -> PName scope
 scopeName (UName n) = n
 
-addError :: D.Diagnostic -> ParseM ()
+addError :: D.Diagnostic -> Parser ()
 addError !d = dispute (pure d)
 
-addErrors :: [D.Diagnostic] -> ParseM ()
+addErrors :: [D.Diagnostic] -> Parser ()
 addErrors [] = pure ()
 addErrors (e : es) = dispute $ DNE.fromNonEmpty $ e :| es
 
-fatalError :: D.Diagnostic -> ParseM a
+fatalError :: D.Diagnostic -> Parser a
 fatalError !d = refute (pure d)
 
 data Parenthesized
@@ -242,7 +168,7 @@ data Parenthesized
   | InParens
   deriving (Eq)
 
-sectionsParenthesized :: Parenthesized -> OperatorSequence Parse -> ParseM PExp
+sectionsParenthesized :: Parenthesized -> OperatorSequence Parse -> Parser PExp
 sectionsParenthesized TopLevel ops | Just op <- sectionOperator ops = do
   addError $
     D.err (needRange op) "missing argument" "operator is missing an argument"
@@ -264,9 +190,9 @@ data BuilderState = BuilderState
   }
 
 type ModuleBuilder =
-  Kleisli (StateT BuilderState ParseM) PModule PModule
+  Kleisli (StateT BuilderState Parser) PModule PModule
 
-runModuleBuilder :: ModuleBuilder -> ParseM PModule
+runModuleBuilder :: ModuleBuilder -> Parser PModule
 runModuleBuilder builder = evalStateT (buildModule emptyModule) builderState
   where
     Kleisli buildModule =
@@ -279,7 +205,7 @@ runModuleBuilder builder = evalStateT (buildModule emptyModule) builderState
           builderBenchmarkCount = 0
         }
 
-liftModuleBuilder :: ParseM () -> ModuleBuilder
+liftModuleBuilder :: Parser () -> ModuleBuilder
 liftModuleBuilder m = Kleisli \p -> p <$ lift m
 
 completePrevious :: ModuleBuilder
@@ -429,7 +355,7 @@ mkImportItem getScope ident behaviour =
 --
 --     > import Some.Module (someName, someName)
 --     > import Some.Module (*, someName as _, someName as _)
-addImportItem :: SrcRange -> ImportMergeState -> ImportItem -> ParseM ImportMergeState
+addImportItem :: SrcRange -> ImportMergeState -> ImportItem -> Parser ImportMergeState
 addImportItem importStmtRange ims ii@ImportItem {..} = case importBehaviour of
   ImportHide
     | Just other <- HM.lookup (importKey ii) (imsRenamed ims),
@@ -477,7 +403,7 @@ addImportItem importStmtRange ims ii@ImportItem {..} = case importBehaviour of
               (importItemRange @- importBehaviour)
           ]
 
-mergeImportAll :: SrcRange -> SrcRange -> [ImportItem] -> ParseM ImportSelection
+mergeImportAll :: SrcRange -> SrcRange -> [ImportItem] -> Parser ImportSelection
 mergeImportAll stmtRange allRange =
   foldM (addImportItem stmtRange) emptyMergeState
     >>> fmap \ims -> do
@@ -496,7 +422,7 @@ mergeImportAll stmtRange allRange =
               (imsRenamed ims)
       ImportAll allRange allHidden (imsRenamed ims)
 
-mergeImportOnly :: SrcRange -> [ImportItem] -> ParseM ImportSelection
+mergeImportOnly :: SrcRange -> [ImportItem] -> Parser ImportSelection
 mergeImportOnly stmtRange =
   foldM (addImportItem stmtRange) emptyMergeState
     >>> fmap (ImportOnly . imsRenamed)
@@ -505,7 +431,7 @@ mergeImportOnly stmtRange =
 -- value under that key an error as with 'errorMultipleDeclarations' is added
 -- and the value is not changed.
 insertNoDuplicates ::
-  (DuplicateError k v, Ord k) => k -> v -> Map.Map k v -> ParseM (Map.Map k v)
+  (DuplicateError k v, Ord k) => k -> v -> Map.Map k v -> Parser (Map.Map k v)
 insertNoDuplicates k v m = mergeNoDuplicates m $ Map.singleton k v
 
 -- | Merges two maps, for any overlapping keys an error as with
@@ -513,7 +439,7 @@ insertNoDuplicates k v m = mergeNoDuplicates m $ Map.singleton k v
 --
 -- In case of any merge duplicates the unmerged map will be returned.
 mergeNoDuplicates ::
-  (DuplicateError k v, Ord k) => Map.Map k v -> Map.Map k v -> ParseM (Map.Map k v)
+  (DuplicateError k v, Ord k) => Map.Map k v -> Map.Map k v -> Parser (Map.Map k v)
 mergeNoDuplicates m new =
   merge m new
     & tolerate
@@ -666,12 +592,10 @@ errorInvalidKind :: SrcRange -> D.Diagnostic
 errorInvalidKind r = D.err r "invalid kind" "not one of the valid kinds"
 {-# NOINLINE errorInvalidKind #-}
 
-errorUnexpectedTokens :: [Token] -> ParseM a
-errorUnexpectedTokens [] = do
-  -- Generate an empty range at the very end of the file.
-  end <- asks getEndLoc
-  fatalError $ D.err (SrcRange end end) "parse error" "unexpected end of file"
-errorUnexpectedTokens (t : _) = do
+errorUnexpectedTokens :: Token -> Parser a
+errorUnexpectedTokens t@TokenEof {} = do
+  fatalError $ D.err (getRange t) "parse error" "unexpected end of file"
+errorUnexpectedTokens t = do
   fatalError $ D.err (getRange t) "parse error" "unexpected token"
 
 errorUnknownPragma :: Token -> Token -> SrcRange -> D.Diagnostic
@@ -680,3 +604,68 @@ errorUnknownPragma pragmaStart pragmaEnd keywordRange =
     & D.fix keywordRange "try ‘BENCHMARK’ or ‘BENCHMARK!’"
   where
     pragmaRange = SrcRange (getStartLoc pragmaStart) (getEndLoc pragmaEnd)
+
+scanToken :: (Token -> Parser a) -> Parser a
+scanToken k = Parser ask >>= \(LexFn f) -> f k
+
+-- | Calls into the lexer to retrieve the next token. It updates the field
+-- 'parseNextToken' for the next token.
+--
+-- TODO: Use lexer states to simplify this abomination.
+scanTokenImpl :: Bool -> ByteString -> LexFn
+scanTokenImpl skipNL input = LexFn \k -> case alexScan input 0 of
+  AlexEOF -> Parser $ etaReaderT do
+    -- We will always return EOF now.
+    let eof = TokenEof (fullRange input)
+    let onlyEof = LexFn \k -> k eof
+    local (const onlyEof) do
+      unParser (k eof)
+  AlexError _ -> do
+    -- This branch can only happen with invalid UTF8. Any unexpected
+    -- (but correctly encoded) characters are caught by the lexer.
+    input' <- invalidUTF8 input
+    runLexFn (scanTokenImpl skipNL input') k
+  AlexSkip input' _ -> do
+    -- Just continue with the remaining part.
+    runLexFn (scanTokenImpl skipNL input') k
+  AlexToken input' len act -> do
+    -- Extract the matched part.
+    let s = BS.take len input
+    -- Run the action.
+    case act s of
+      -- In case of a diagnostic, add it to our list of diagnostics.
+      Left d -> dispute (pure d) *> runLexFn (scanTokenImpl skipNL input') k
+      Right nl@(TokenNL _)
+        -- Lexing a NL in skipNL mode just advances to the next token.
+        | skipNL -> runLexFn (scanTokenImpl skipNL input') k
+        -- Otherwise we have to continue looking for the next token (now
+        -- skipping NL!) in order to skip any trailing NL tokens.
+        | otherwise -> runLexFn (scanTokenImpl True input') \case
+            -- If the next token is EOF, we emit EOF immediately.
+            eof@TokenEof {} -> k eof
+            -- Otherwise, we emit our newline token.
+            next -> Parser do
+              -- Adjust the current lexing function, which would lex the token
+              -- _after_ `next`, to emit `next` first.
+              let prefix :: LexFn -> LexFn
+                  prefix lexFn = LexFn \k -> Parser do
+                    -- Once we have `next` emitted, we continue on with the
+                    -- `LexFn` installed by the surroinding lex function.
+                    local (const lexFn) do
+                      unParser (k next)
+              local prefix do
+                unParser (k nl)
+      -- Otherwise we have found a valid token.
+      Right t -> Parser do
+        -- Set the lexing function accordingly. The current token isn't a
+        -- newline so we don't start to skip the next newline tokens.
+        local (const (scanTokenImpl False input')) do
+          -- Call the continuation with the resulting token.
+          unParser (k t)
+
+runParser :: ByteString -> Parser a -> Either D.Errors a
+runParser input =
+  unParser
+    >>> flip runReaderT (scanTokenImpl True input)
+    >>> runValidate
+    >>> first DNE.toNonEmpty

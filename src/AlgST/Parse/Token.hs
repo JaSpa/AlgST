@@ -1,6 +1,17 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-redundant-constraints #-}
 
 module AlgST.Parse.Token where
 
@@ -10,7 +21,7 @@ import AlgST.Util.Output
 import AlgST.Util.SourceLocation
 import Control.Applicative
 import Data.DList qualified as DL
-import GHC.Generics (Generic (..))
+import GHC.Generics (Generic)
 
 data Token
 {- ORMOLU_DISABLE -}
@@ -62,6 +73,7 @@ data Token
   | TokenImport   SrcRange
   | TokenLPragma  SrcRange
   | TokenRPragma  SrcRange
+  | TokenEof      SrcRange
   deriving stock (Show, Generic)
   deriving (HasRange) via Generically Token
 {- ORMOLU_ENABLE -}
@@ -117,6 +129,7 @@ prettyToken = \case
   TokenString   (_ :@ s) -> show s
   TokenBool     (_ :@ b) -> show b
   TokenEnd      (_ :@ p) -> "End" ++ show p
+  TokenEof      _ -> "EOF"
 {- ORMOLU_ENABLE -}
 
 dropNewlines :: [Token] -> [Token]

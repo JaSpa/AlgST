@@ -8,11 +8,14 @@ module AlgST.Util.SourceManager
 
     -- * Buffers
     Buffer (..),
+    emptyBuffer,
+    encodedBuffer,
     decodeBuffer,
 
     -- * Handling multiple buffers
     SourceManager,
     emptyManager,
+    singletonManager,
     managedBuffers,
 
     -- ** Inserting Buffers
@@ -71,6 +74,19 @@ instance Show Buffer where
 
 instance HasRange Buffer where
   getRange = fullRange . bufferContents
+
+-- | A 'Buffer' with empty 'bufferContents' of the given name.
+emptyBuffer :: FilePath -> Buffer
+emptyBuffer name = Buffer {bufferName = name, bufferContents = BS.empty}
+
+-- | UTF-8 encodes the 'String' and stores it in 'bufferContents'.
+encodedBuffer :: FilePath -> String -> Buffer
+encodedBuffer name contents =
+  Buffer
+    { bufferName = name,
+      bufferContents = unsafePerformIO do
+        GHC.withCStringLen IO.utf8 contents BS.packCStringLen
+    }
 
 -- | Decodes the UTF-8 encoded 'bufferContents' to a 'String'.
 decodeBuffer :: Buffer -> String
@@ -141,6 +157,9 @@ prettySrcRange mgr r =
 
 emptyManager :: SourceManager
 emptyManager = SourceManager mempty
+
+singletonManager :: Buffer -> SourceManager
+singletonManager = SourceManager . Seq.singleton
 
 managedBuffers :: SourceManager -> Seq Buffer
 managedBuffers (SourceManager bs) = bs

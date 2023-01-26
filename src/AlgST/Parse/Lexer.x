@@ -3,7 +3,7 @@
 
 module AlgST.Parse.Lexer (AlexInput, AlexReturn(..), alexScan) where
 
-import AlgST.Parse.ParseUtils
+import AlgST.Parse.LexerUtils
 import AlgST.Parse.Token
 import AlgST.Syntax.Type (Polarity(..))
 import AlgST.Util.SourceLocation

@@ -9,19 +9,14 @@
 {-# LANGUAGE TypeApplications #-}
 module AlgST.Parse.Parser
   ( -- * Parsers
-    Parser(..)
+    Parser
+  , runParser
   , parseModule
   , parseDecls
   , parseImports
   , parseType
   , parseKind
   , parseExpr
-
-    -- * Running Parsers
-  , feedParser
-  , runParser
-  , runParserIO
-  , runParserSimple
 
     -- * Re-exports
   , ParsedModule(..)
@@ -82,7 +77,8 @@ import           AlgST.Util.ErrorMessage
 
 %tokentype { Token }
 %error { errorUnexpectedTokens }
-%monad { ParseM }
+%monad { Parser }
+%lexer { scanToken } { TokenEof _ }
 
 %token
   nl       { TokenNL        _ }
@@ -185,7 +181,7 @@ Import :: { Located (Import ModuleName) }
 -- Parses an import list. The given `SrcRange` should be the range of the
 -- import statement without the import list, ie. the range of the `import`
 -- token and the imported module.
-ImportList :: { SrcRange -> ParseM ImportSelection }
+ImportList :: { SrcRange -> Parser ImportSelection }
   -- The optional `nl` tokens allow the closing parenthesis to appear on a new
   -- line in column 0.
   : {- empty -}                       { \ir -> pure $ ImportAll ir mempty mempty }
@@ -196,7 +192,7 @@ ImportList :: { SrcRange -> ParseM ImportSelection }
   -- whole import list).
   | '(' ImportSelection opt(nl) ')'   { ($2 $!) . runion $4 }
 
-ImportSelection :: { SrcRange -> ParseM ImportSelection }
+ImportSelection :: { SrcRange -> Parser ImportSelection }
   : ImportItems opt(',')
     { \stmtRange -> mergeImportOnly stmtRange (DL.toList $1) }
   | '*' ',' ImportItems opt(',')
@@ -392,7 +388,7 @@ EAppTail :: { PExp }
   | ETail                          { $1 }
   | EApp ETail                     { E.App (needPos $1) $1 $2 }
 
-EOps :: { Parenthesized -> ParseM PExp }
+EOps :: { Parenthesized -> Parser PExp }
   : OpTys
     { \p -> do
         -- A single operator may be used as a function value if it is wrapped in
@@ -410,7 +406,7 @@ EOps :: { Parenthesized -> ParseM PExp }
   | OpTys OpsExp
     { \ps -> sectionsParenthesized ps $ $1 `opSeqCons` $2 }
 
-ExpInner :: { Parenthesized -> ParseM PExp }
+ExpInner :: { Parenthesized -> Parser PExp }
   : EOps                           { $1 }
   | EAppTail                       { const (pure $1) }
 
@@ -421,7 +417,7 @@ TypeApps :: { DL.DList PType }
   : Type                           { DL.singleton $1 }
   | TypeApps ',' Type              { $1 `DL.snoc` $3 }
 
-RecExp :: { forall a. (Pos -> ProgVar PStage -> PType -> E.RecLam Parse -> a) -> ParseM a }
+RecExp :: { forall a. (Pos -> ProgVar PStage -> PType -> E.RecLam Parse -> a) -> Parser a }
   : rec ProgVar TySig '=' Exp {
       \f -> case $5 of
         E.RecAbs r -> pure $ f (needPos $1) (unL $2) $3 r
@@ -484,7 +480,7 @@ CaseMap :: { PCaseMap }
   : Case             {% $1 emptyCaseMap }
   | CaseMap ',' Case {% $3 $1 }
 
-Case :: { PCaseMap -> ParseM PCaseMap }
+Case :: { PCaseMap -> Parser PCaseMap }
   : Pattern '->' Exp { \pcm -> do
       let (con, binds) = $1
       let branch = CaseBranch
@@ -702,14 +698,14 @@ wildcard(v)
   | '_'   { $1 @- Wildcard }
 
 -- bindings(p) :
---   (Foldable f, Eq a, Hashable a, ErrorMsg a) => (p -> f (Located a)) -> ParseM [p]
+--   (Foldable f, Eq a, Hashable a, ErrorMsg a) => (p -> f (Located a)) -> Parser [p]
 --
 -- Parses a sequence of `p` and ensures that the extracted `a`s are different.
 bindings(p)
   : bindings_(p) { fmap DL.toList . $1 Map.empty }
 
 -- bindings1(p) :
---   (Foldable f, Eq a, Hashable a, ErrorMsg a) => (p -> f (Located a)) -> ParseM (NonEmpty p)
+--   (Foldable f, Eq a, Hashable a, ErrorMsg a) => (p -> f (Located a)) -> Parser (NonEmpty p)
 --
 -- Like `bindings` but for a non-empty sequence.
 bindings1(p)
@@ -747,43 +743,21 @@ opt(t)
 
 
 {
-newtype Parser a = Parser ([Token] -> ParseM a)
-  deriving (Functor)
-
 parseModule :: Parser ParsedModule
-parseModule = Parser parseModule_
+parseModule = parseModule_
 
 parseImports :: Parser [Located (Import ModuleName)]
-parseImports = Parser parseImports_
+parseImports = parseImports_
 
 parseDecls :: Parser PModule
-parseDecls = Parser (parseDecls_ >=> runModuleBuilder)
+parseDecls = parseDecls_ >>= runModuleBuilder
 
 parseType :: Parser PType
-parseType = Parser $ parseType_ . dropNewlines
+parseType = parseType_ -- TODO: dropNewlines
 
 parseKind :: Parser K.Kind
-parseKind = Parser $ fmap unL . parseKind_ . dropNewlines
+parseKind = fmap unL parseKind_ -- TODO: dropNewlines
 
 parseExpr :: Parser PExp
-parseExpr = Parser $ parseExpr_ . dropNewlines
-
-feedParser :: Parser a -> String -> ParseM a
-feedParser = flip lexer
-
-runParser :: Parser a -> String -> Either Errors a
-runParser parser = undefined -- runParseM . feedParser parser
-
--- | Runs a parser with the contents of the provided file. This function may
--- throw for all of the reasons 'readFile' may throw.
-runParserIO :: Parser a -> FilePath -> IO (Either Errors a)
-runParserIO parser file = undefined -- runParser parser <$> readFile file
-
--- | Runs a parser from on the given input string, returning either the
--- rendered errors (mode 'Plain') or the successfull result.
-runParserSimple :: Parser a -> String -> Either String a
-runParserSimple p = undefined -- first (renderErrors Plain "" . toList) . runParser p
-
-lexer :: String -> Parser a -> ParseM a
-lexer str (Parser f) = undefined -- either fatalError f $ scanTokens str
+parseExpr =  parseExpr_ -- TODO: dropNewlines
 }

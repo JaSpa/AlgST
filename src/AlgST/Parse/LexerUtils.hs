@@ -1,0 +1,74 @@
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RankNTypes #-}
+
+module AlgST.Parse.LexerUtils where
+
+import AlgST.Parse.Token
+import AlgST.Util.Diagnose qualified as D
+import AlgST.Util.SourceManager
+import Control.Monad.Reader
+import Control.Monad.Validate
+import Data.ByteString (ByteString)
+import Data.ByteString qualified as BS
+import Data.Function ((&))
+import Data.Word
+import GHC.Foreign qualified as GHC
+import Numeric (showHex)
+import System.IO qualified as IO
+import System.IO.Unsafe
+
+newtype LexFn = LexFn {runLexFn :: forall a. (Token -> Parser a) -> Parser a}
+
+newtype Parser a = Parser {unParser :: ReaderT LexFn (Validate D.DErrors) a}
+  deriving newtype (Functor, Applicative, Monad)
+  deriving newtype (MonadValidate D.DErrors)
+
+type LexAction = ByteString -> Either D.Diagnostic Token
+
+type AlexInput = ByteString
+
+alexGetByte :: AlexInput -> Maybe (Word8, AlexInput)
+alexGetByte = BS.uncons
+
+alexInputPrevChar :: AlexInput -> Char
+alexInputPrevChar = error "left context not implemented"
+{-# WARNING alexInputPrevChar "left context not implemented" #-}
+
+simpleToken :: (SrcRange -> Token) -> LexAction
+simpleToken f = Right . f . fullRange
+
+textToken :: (Located String -> Token) -> LexAction
+textToken = textToken' id
+
+textToken' :: (String -> a) -> (Located a -> Token) -> LexAction
+textToken' f g s = Right $ g $ fullRange s @- f decoded
+  where
+    decoded = unsafeDupablePerformIO do
+      BS.useAsCStringLen s (GHC.peekCStringLen IO.utf8)
+
+invalidChar :: LexAction
+invalidChar s = Left do
+  D.err
+    (fullRange s)
+    "invalid source character"
+    "skipping this character, trying to continue"
+
+-- | Emits an error about invalid UTF-8. We try to recover and return the
+-- remaining input.
+invalidUTF8 :: MonadValidate D.DErrors m => AlexInput -> m AlexInput
+invalidUTF8 s =
+  -- TODO: Implement recovery.
+  refute (pure err)
+  where
+    err =
+      D.err
+        (SizedRange (startLoc s) 1)
+        "invalid UTF-8"
+        ("unexpected byte 0x" ++ showByte (BS.head s))
+        & D.hint "I stopped reading the input file here."
+    showByte b =
+      "0x" ++ case showHex b "" of
+        hex@[_] -> '0' : hex
+        hex -> hex
