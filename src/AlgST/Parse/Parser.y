@@ -753,11 +753,11 @@ parseDecls :: Parser PModule
 parseDecls = parseDecls_ >>= runModuleBuilder
 
 parseType :: Parser PType
-parseType = parseType_ -- TODO: dropNewlines
+parseType = skippingNLs parseType_
 
 parseKind :: Parser K.Kind
-parseKind = fmap unL parseKind_ -- TODO: dropNewlines
+parseKind = skippingNLs (fmap unL parseKind_)
 
 parseExpr :: Parser PExp
-parseExpr =  parseExpr_ -- TODO: dropNewlines
+parseExpr =  skippingNLs parseExpr_
 }

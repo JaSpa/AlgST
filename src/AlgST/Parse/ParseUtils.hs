@@ -20,6 +20,7 @@ module AlgST.Parse.ParseUtils
     Parser (..),
     runParser,
     scanToken,
+    skippingNLs,
     LexFn (..),
     UnscopedName (..),
     scopeName,
@@ -106,6 +107,7 @@ import Data.Map.Strict qualified as Map
 import Data.Maybe
 import Data.Singletons
 import Lens.Family2 hiding ((&))
+import Lens.Family2.Stock (_1, _2)
 import Numeric.Natural
 
 data ParsedModule = ParsedModule
@@ -597,6 +599,11 @@ errorUnexpectedTokens t@TokenEof {} = do
   fatalError $ D.err (getRange t) "parse error" "unexpected end of file"
 errorUnexpectedTokens t = do
   fatalError $ D.err (getRange t) "parse error" "unexpected token"
+{-# NOINLINE errorUnexpectedTokens #-}
+
+skippingNLs :: Parser a -> Parser a
+skippingNLs (Parser m) = Parser do
+  local (_1 .~ NLSkipAll) m
 
 errorUnknownPragma :: Token -> Token -> SrcRange -> D.Diagnostic
 errorUnknownPragma pragmaStart pragmaEnd keywordRange =
@@ -606,66 +613,70 @@ errorUnknownPragma pragmaStart pragmaEnd keywordRange =
     pragmaRange = SrcRange (getStartLoc pragmaStart) (getEndLoc pragmaEnd)
 
 scanToken :: (Token -> Parser a) -> Parser a
-scanToken k = Parser ask >>= \(LexFn f) -> f k
+scanToken k = Parser ask >>= \(nlp, lf) -> runLexFn (lf nlp) k
 
 -- | Calls into the lexer to retrieve the next token. It updates the field
 -- 'parseNextToken' for the next token.
 --
--- TODO: Use lexer states to simplify this abomination.
-scanTokenImpl :: Bool -> ByteString -> LexFn
-scanTokenImpl skipNL input = LexFn \k -> case alexScan input 0 of
+-- TODO: Can we use lexer states to simplify this abomination?
+scanTokenImpl :: ByteString -> NewlinePolicy -> LexFn
+scanTokenImpl input nlp = LexFn \k -> case alexScan input 0 of
   AlexEOF -> Parser $ etaReaderT do
     -- We will always return EOF now.
     let eof = TokenEof (fullRange input)
     let onlyEof = LexFn \k -> k eof
-    local (const onlyEof) do
+    local (_2 .~ const onlyEof) do
       unParser (k eof)
   AlexError _ -> do
     -- This branch can only happen with invalid UTF8. Any unexpected
     -- (but correctly encoded) characters are caught by the lexer.
     input' <- invalidUTF8 input
-    runLexFn (scanTokenImpl skipNL input') k
+    runLexFn (scanTokenImpl input' nlp) k
   AlexSkip input' _ -> do
     -- Just continue with the remaining part.
-    runLexFn (scanTokenImpl skipNL input') k
+    runLexFn (scanTokenImpl input' nlp) k
   AlexToken input' len act -> do
     -- Extract the matched part.
     let s = BS.take len input
     -- Run the action.
     case act s of
       -- In case of a diagnostic, add it to our list of diagnostics.
-      Left d -> dispute (pure d) *> runLexFn (scanTokenImpl skipNL input') k
-      Right nl@(TokenNL _)
-        -- Lexing a NL in skipNL mode just advances to the next token.
-        | skipNL -> runLexFn (scanTokenImpl skipNL input') k
-        -- Otherwise we have to continue looking for the next token (now
-        -- skipping NL!) in order to skip any trailing NL tokens.
-        | otherwise -> runLexFn (scanTokenImpl True input') \case
+      -- TODO: Should this transition the newline policy?
+      Left d -> dispute (pure d) *> runLexFn (scanTokenImpl input' nlp) k
+      Right nl@(TokenNL _) ->
+        case nlp of
+          -- Lexing a NL in skipNL mode just advances to the next token.
+          NLSkipAll -> runLexFn (scanTokenImpl input' nlp) k
+          NLSkipFollowing -> runLexFn (scanTokenImpl input' nlp) k
+          -- Otherwise we have to continue looking for the next token (now
+          -- skipping NL!) in order to skip any trailing NL tokens.
+          NLSkipConsecutive -> runLexFn (scanTokenImpl input' NLSkipFollowing) \case
             -- If the next token is EOF, we emit EOF immediately.
             eof@TokenEof {} -> k eof
             -- Otherwise, we emit our newline token.
             next -> Parser do
               -- Adjust the current lexing function, which would lex the token
               -- _after_ `next`, to emit `next` first.
-              let prefix :: LexFn -> LexFn
-                  prefix lexFn = LexFn \k -> Parser do
+              let prefix :: (NewlinePolicy -> LexFn) -> (NewlinePolicy -> LexFn)
+                  prefix lexFn _nlp = LexFn \k -> Parser do
                     -- Once we have `next` emitted, we continue on with the
                     -- `LexFn` installed by the surroinding lex function.
-                    local (const lexFn) do
+                    local (_2 .~ lexFn) do
                       unParser (k next)
-              local prefix do
+              local (_2 %~ prefix) do
                 unParser (k nl)
       -- Otherwise we have found a valid token.
       Right t -> Parser do
         -- Set the lexing function accordingly. The current token isn't a
         -- newline so we don't start to skip the next newline tokens.
-        local (const (scanTokenImpl False input')) do
+        let !nlp' = policyAfterToken nlp
+        local (const (nlp', scanTokenImpl input')) do
           -- Call the continuation with the resulting token.
           unParser (k t)
 
 runParser :: ByteString -> Parser a -> Either D.Errors a
 runParser input =
   unParser
-    >>> flip runReaderT (scanTokenImpl True input)
+    >>> flip runReaderT (NLSkipFollowing, scanTokenImpl input)
     >>> runValidate
     >>> first DNE.toNonEmpty

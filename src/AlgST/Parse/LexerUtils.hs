@@ -19,9 +19,27 @@ import Numeric (showHex)
 import System.IO qualified as IO
 import System.IO.Unsafe
 
+data NewlinePolicy
+  = -- | Don't report any immediately following 'TokenNL' tokens. Behaves like
+    -- 'NLSkipConsecutive' once a proper token has been returned.
+    NLSkipFollowing
+  | -- | Report the next 'TokenNL' token but skip over consecutive 'TokenNL'
+    -- tokens.
+    NLSkipConsecutive
+  | -- | Don't report any 'TokenNL' tokens to the parser.
+    NLSkipAll
+
+-- | Changes the policy after reading a non 'TokenNL' token.
+--
+-- 'NLSkipAll' stays as 'NLSkipAll' wheras both 'NLSkipFollowing' and
+-- 'NLSkipConsecutive' become 'NLSkipConsecutive'.
+policyAfterToken :: NewlinePolicy -> NewlinePolicy
+policyAfterToken NLSkipAll = NLSkipAll
+policyAfterToken _ = NLSkipConsecutive
+
 newtype LexFn = LexFn {runLexFn :: forall a. (Token -> Parser a) -> Parser a}
 
-newtype Parser a = Parser {unParser :: ReaderT LexFn (Validate D.DErrors) a}
+newtype Parser a = Parser {unParser :: ReaderT (NewlinePolicy, NewlinePolicy -> LexFn) (Validate D.DErrors) a}
   deriving newtype (Functor, Applicative, Monad)
   deriving newtype (MonadValidate D.DErrors)
 
