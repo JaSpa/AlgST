@@ -1,4 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module AlgST.Util.Diagnose
   ( -- * Types
@@ -32,12 +34,22 @@ module AlgST.Util.Diagnose
     E.printDiagnostic,
     E.WithUnicode (..),
     E.TabSize (..),
+
+    -- * @MonadValidate@ integration
+    MonadErrors,
+    addError,
+    fatalError,
+    failNothing,
+    runErrors,
+    runErrorsT,
   )
 where
 
 import AlgST.Util.SourceManager
 import Control.Monad.Eta
-import Data.DList.DNonEmpty (DNonEmpty)
+import Control.Monad.Validate
+import Data.Bifunctor
+import Data.DList.DNonEmpty (DNonEmpty, toNonEmpty)
 import Data.Foldable
 import Data.List qualified as List
 import Data.List.NonEmpty (NonEmpty)
@@ -51,6 +63,23 @@ type Errors = NonEmpty Diagnostic
 -- | Difference-version of 'Errors'. Prefer this when accumulating
 -- 'Diagnostic's in a monoidal context.
 type DErrors = DNonEmpty Diagnostic
+
+type MonadErrors = MonadValidate DErrors
+
+addError :: (MonadErrors m) => Diagnostic -> m ()
+addError !d = dispute (pure d)
+
+fatalError :: (MonadErrors m) => Diagnostic -> m a
+fatalError !d = refute (pure d)
+
+failNothing :: (MonadErrors m) => Diagnostic -> Maybe a -> m a
+failNothing d = maybe (fatalError d) pure
+
+runErrors :: Validate DErrors a -> Either Errors a
+runErrors = first toNonEmpty . runValidate
+
+runErrorsT :: (Functor m) => ValidateT DErrors m a -> m (Either Errors a)
+runErrorsT = fmap (first toNonEmpty) . runValidateT
 
 -- | A @Diagnostic@ is either an error or a warning, including notes, hints,
 -- context, etc.

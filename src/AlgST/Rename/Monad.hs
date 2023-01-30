@@ -19,13 +19,15 @@ import AlgST.Rename.Error qualified as Error
 import AlgST.Rename.Fresh
 import AlgST.Rename.Modules
 import AlgST.Syntax.Name
-import AlgST.Syntax.Pos
-import AlgST.Util.ErrorMessage
+import AlgST.Util.Diagnose (DErrors)
 import AlgST.Util.Lenses
+import AlgST.Util.SourceLocation
 import Control.Monad.Reader
 import Control.Monad.Validate
 import Data.Generics.Lens.Lite
+import Data.List (minimumBy)
 import Data.Map.Strict qualified as Map
+import Data.Ord
 import Data.Semigroup
 import GHC.Generics (Generic)
 import Language.Haskell.TH.Syntax (Lift)
@@ -58,8 +60,8 @@ data PartialResolve scope
   deriving stock (Show, Lift)
 
 instance Semigroup (PartialResolve scope) where
-  PartialResolve x <> PartialResolve y =
-    PartialResolve $ Map.unionWith earlier x y
+  PartialResolve x <> PartialResolve y = PartialResolve do
+    Map.unionWith (\a1 a2 -> minimumBy (comparing getRange) [a1, a2]) x y
   UniqueLocal x <> _ = UniqueLocal x
   _ <> UniqueLocal x = UniqueLocal x
   stimes = stimesIdempotent

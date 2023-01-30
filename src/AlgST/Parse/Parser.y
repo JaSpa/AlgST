@@ -49,6 +49,7 @@ import           Data.Proxy
 import           Data.Semigroup                (Semigroup(..))
 import           Data.Sequence                 (Seq(..))
 import qualified Data.Sequence                 as Seq
+import           Lens.Family2
 import           AlgST.Builtins.Names
 import           AlgST.Parse.ParseUtils
 import           AlgST.Parse.Phase
@@ -271,7 +272,7 @@ Decl :: { ModuleBuilder }
   | type KindedTVar TypeParams '=' Type { do
       let (nameRange, name, mkind) = $2
       let !range = sconcat $
-            getRange $1 :| nameRange : fmap (getRange . fst) $3 
+            getRange $1 :| nameRange : fmap getRange $3 
       let decl = AliasDecl range TypeAlias
             { aliasParams = $3
             , aliasKind = mkind
@@ -283,7 +284,7 @@ Decl :: { ModuleBuilder }
   | data KindedTVar TypeParams { do
       let (nameRange, name, mkind) = $2
       let !range = sconcat $
-            getRange $1 :| nameRange : fmap (getRange . fst) $3 
+            getRange $1 :| nameRange : fmap getRange $3 
       let decl = DataDecl range TypeNominal
             { nominalParams = $3
             , nominalKind = K.TU `fromMaybe` mkind
@@ -294,7 +295,7 @@ Decl :: { ModuleBuilder }
   | data KindedTVar TypeParams '=' DataCons { do
       let (nameRange, name, mkind) = $2
       let !range = sconcat $
-            getRange $1 :| nameRange : fmap (getRange . fst) $3 
+            getRange $1 :| nameRange : fmap getRange $3 
       let decl = DataDecl range TypeNominal
             { nominalParams = $3
             , nominalKind = K.TU `fromMaybe` mkind
@@ -305,7 +306,7 @@ Decl :: { ModuleBuilder }
   | protocol KindedTVar TypeParams '=' DataCons { do
       let (nameRange, name, mkind) = $2
       let !range = sconcat $
-            getRange $1 :| nameRange : fmap (getRange . fst) $3 
+            getRange $1 :| nameRange : fmap getRange $3 
       let decl = ProtoDecl range TypeNominal
             { nominalParams = $3
             , nominalKind = K.P `fromMaybe` mkind
@@ -317,13 +318,13 @@ Decl :: { ModuleBuilder }
 TySig :: { PType }
   : ':' Type     { $2 }
 
-TypeParams :: { [(Located (TypeVar PStage), K.Kind)] }
+TypeParams :: { [Located (TypeVar PStage, K.Kind)] }
   : {- empty -}   { [] }
   | TypeParams1   { toList $1 }
 
 -- A `forall` requires a non-empty list of type var bindings.
-TypeParams1 :: { NonEmpty (Located (TypeVar PStage), K.Kind) }
-  : bindings1(KindBind) {% $1 \(locName, _) -> Identity locName }
+TypeParams1 :: { NonEmpty (Located (TypeVar PStage, K.Kind)) }
+  : bindings1(KindBind) {% $1 \(r :@ (name, _)) -> Identity (r :@ name) }
 
 DataCons :: { Constructors PStage PType }
   : DataCon              {  uncurry Map.singleton $1 }
@@ -360,7 +361,7 @@ EAtom :: { PExp }
   | '(,)'                          {% fatalError $ errorMisplacedPairCon @Values (getRange $1) }
   | ProgVar                        { Pos.uncurryL E.Var (needPLoc $1) }
   | Constructor                    { Pos.uncurryL E.Con (needPLoc $1) }
-  | '(' ExpInner ')'               {% $2 InParens }
+  | '(' ExpInner ')'               {% $2 $ InParens $ $1 `runion` $3 }
   | '(' Exp ',' Exp ')'            { E.Pair (needPos $1) $2 $4 }
   | case Exp of Cases              { E.Case (needPos $1) $2 $4 }
   | new                            { E.Exp $ Left $ BuiltinNew (needPos $1) }
@@ -394,17 +395,15 @@ EOps :: { Parenthesized -> Parser PExp }
         -- A single operator may be used as a function value if it is wrapped in
         -- parentheses. Without parentheses we will complain.
         when (p == TopLevel) $ void do
-          -- We know that this will produce a diagnostic. We are not interested
-          -- in the actual resutl.
-          sectionsParenthesized TopLevel $ OperatorFirst (Just $1) (pure $1) 
+          addError $ errorMissingOperand Nothing $1
         pure $1
     }
   | OpsExp
     { \ps -> sectionsParenthesized ps $1 }
   | OpTys EAppTail
-    { \ps -> sectionsParenthesized ps $ OperatorFirst Nothing ($1 :| [$2]) }
+    { \ps -> sectionsParenthesized ps $ opsLeftSection $1 $2 }
   | OpTys OpsExp
-    { \ps -> sectionsParenthesized ps $ $1 `opSeqCons` $2 }
+    { \ps -> sectionsParenthesized ps $ $1 `consOperator` $2 }
 
 ExpInner :: { Parenthesized -> Parser PExp }
   : EOps                           { $1 }
@@ -431,7 +430,7 @@ LetBind :: { Pos -> PExp -> PExp -> PExp }
 LamExp :: { PExp }
   : lambda Abs Arrow Exp {% do
       let (build, anyTermAbs, absRange) = $2
-      let (arrRange, arrMul) = $3
+      let arrRange :@ arrMul = $3
       when (arrMul == K.Lin && not anyTermAbs) do
         addErrors [errorNoTermLinLambda ($1 `runion` absRange) arrRange]
       pure $ appEndo (build (getRange $1) arrMul) $4
@@ -454,7 +453,7 @@ Abs :: { (SrcRange -> K.Multiplicity -> Endo PExp, Bool, SrcRange) }
       let mkVAbs argRange (v, t) lamLoc m =
             Endo $ E.Abs @Parse (needPos lamLoc) . E.Bind (needPos argRange) m v t
       let mkTAbs argRange (v, k) lamLoc _ =
-            Endo $ E.TypeAbs @Parse (needPos lamLoc) . K.Bind (needPos argRange) v k
+            Endo $ E.TypeAbs @Parse (needPos lamLoc) . K.Bind argRange v k
       let f1 = pure (,,)
             <*> lmap (\(r :@ arg) -> either (mkVAbs r) (mkTAbs r) arg) L1.sconcat
             <*> L1.fromFold (L.any (isLeft . unL))
@@ -464,9 +463,9 @@ Abs :: { (SrcRange -> K.Multiplicity -> Endo PExp, Bool, SrcRange) }
 
 Abs1 :: { Located (Either (ProgVar PStage, Maybe PType) (TypeVar PStage, K.Kind)) } 
   : wildcard(ProgVar)                  { $1 @- Left (unL $1, Nothing) }
-  | '(' wildcard(ProgVar) ')'          { $2 @- Left (unL $2, Nothing) }
-  | '(' wildcard(ProgVar) ':' Type ')' { $2 @- Left (unL $2, Just $4) }
-  | '[' wildcard(TypeVar) ':' Kind ']' { $2 @- Right (unL $2, unL $4) }
+  | '(' wildcard(ProgVar) ')'          { ($1 `runion` $3) @- Left (unL $2, Nothing) }
+  | '(' wildcard(ProgVar) ':' Type ')' { ($1 `runion` $5) @- Left (unL $2, Just $4) }
+  | '[' wildcard(TypeVar) ':' Kind ']' { ($1 `runion` $5) @- Right (unL $2, unL $4) }
 
 Cases :: { PCaseMap }
   : -- An empty case is not allowed. Accepting it here allows us to provide
@@ -530,10 +529,10 @@ OpTys :: { PExp }
   : Op                      { Pos.uncurryL E.Var (needPLoc $1) }
   | OpTys '[' TypeApps ']'  { E.foldTypeApps (const needPos) $1 $3 }
 
-OpsExp :: { OperatorSequence Parse }
-  : EApp OpTys              { OperandFirst (Just $2) ($1 :| [$2]) }
-  | EApp OpTys EAppTail     { OperandFirst Nothing   ($1 :| [$2, $3]) }
-  | EApp OpTys OpsExp       { $1 `opSeqCons` $2 `opSeqCons` $3 }
+OpsExp :: { OperatorSequence HeadE Parse PExp }
+  : EApp OpTys              { opsRightSection $1 $2 }
+  | EApp OpTys EAppTail     { opsSimpleSeq $1 $2 $3 }
+  | EApp OpTys OpsExp       { $1 `consOperand` $2 `consOperator` $3 }
 
 
 -------------------------------------------------------------------------------
@@ -544,7 +543,7 @@ OpsExp :: { OperatorSequence Parse }
 polarised(t)
   :     t              { $1 }
   | '+' polarised(t)   { $2 }
-  | '-' polarised(t)   { T.Negate (needPos $1) $2 :: PType }
+  | '-' polarised(t)   { T.Negate ($1 `runion` $2) $2 :: PType }
 
 ConSequence1 :: { NameMap Values Pos }
   : Constructor                   { Map.singleton (unL $1) (needPos $1) }
@@ -562,54 +561,58 @@ ProtocolSubset :: { T.ProtocolSubset Written }
     } }
 
 TypeAtom :: { PType }
-  : '()'                          { T.Unit (needPos $1) }
+  : '()'                          { T.Unit (getRange $1) }
   | '(,)'                         {% fatalError $ errorMisplacedPairCon @Types (getRange $1) }
-  | '(' Type ',' TupleType ')'    { T.Pair (needPos $1) $2 $4 }
-  | end                           { Pos.uncurryL T.End (needPLoc $1) }
-  | TypeVar                       { Pos.uncurryL T.Var (needPLoc $1) }
-  | TypeName opt(ProtocolSubset)  { Pos.uncurryL T.Con (needPLoc $1) $2 }
+  | '(' Type ',' TupleType ')'    { T.Pair (getRange $1) $2 $4 }
+  | end                           { uncurryL T.End $1 }
+  | TypeVar                       { uncurryL T.Var $1 }
+  | TypeName opt(ProtocolSubset)  { uncurryL T.Con $1 $2 }
   | '(' Type ')'                  { $2 }
 
 Type1 :: { PType }
   : TypeAtom                      { $1 }
-  | Type1 polarised(TypeAtom)     { T.App (needPos $1) $1 $2 }
+  | Type1 polarised(TypeAtom)     { T.App ($1 `runion` $2) $1 $2 }
 
 Type2 :: { PType }
   : polarised(Type1)              { $1 }
 
 Type3 :: { PType }
   : Type2                         { $1 }
-  | Polarity Type2 '.' Type3      { uncurry T.Session $1 $2 $4 }
+  | Polarity Type2 '.' Type3      { do
+      let pol = $1 & rangeL %~ \r -> r `runion` $2 `runion` $3
+      uncurryL T.Session pol $2 $4
+    }
 
 Type4 :: { PType }
   : Type3                         { $1 }
-  | dualof Type4                  { T.Dualof (needPos $1) $2 }
+  | dualof Type4                  { T.Dualof ($1 `runion` $2) $2 }
 
 Type5 :: { PType }
   : Type4                         { $1 }
-  | Type4 Arrow Type5             { uncurry T.Arrow (first needPos $2) $1 $3 }
+  | Type4 Arrow Type5             { T.Arrow ($1 `runion` $3) (unL $2) $1 $3 }
   | Forall Type5                  { $1 $2 }
 
 Type :: { PType }
   : Type5                         { $1 }
 
 Forall :: { PType -> PType }
-  : forall TypeParams1 '.' { do
-      let bind (v, k) = Endo $ T.Forall @Parse (needPos $1) . Pos.uncurryL K.Bind v k
-      appEndo $ foldMap bind (fmap (first needPLoc) $2)
+  : forall TypeParams1 '.' { \t -> do
+      let !range = $1 `runion` $3 `runion` t
+      let bind (r :@ (v, k)) = Endo $ T.Forall @Parse range . K.Bind r v k
+      appEndo (foldMap bind $2) t
     }
 
 TupleType :: { PType }
   : Type               { $1 }
-  | Type ',' TupleType { T.Pair (needPos $1) $1 $3 }
+  | Type ',' TupleType { T.Pair ($1 `runion` $3) $1 $3 }
 
-Arrow :: { (SrcRange, K.Multiplicity) }
-  : '->' { (getRange $1, K.Un) }
-  | '-o' { (getRange $1, K.Lin) }
+Arrow :: { Located K.Multiplicity }
+  : '->' { $1 @- K.Un }
+  | '-o' { $1 @- K.Lin }
 
-Polarity :: { (Pos, T.Polarity) }
-  : '!' { (needPos $1, T.Out) }
-  | '?' { (needPos $1, T.In) }
+Polarity :: { Located T.Polarity }
+  : '!' { $1 @- T.Out }
+  | '?' { $1 @- T.In }
 
 -- A sequence of types to be used in a constructor declaration.
 TypeSeq :: { DL.DList PType }
@@ -683,10 +686,10 @@ TypeVar :: { Located (TypeVar PStage) }
 TypeName :: { Located (TypeVar PStage) }
   : NameCon { scopeName `fmap` $1 }
 
-KindBind :: { (Located (TypeVar PStage), K.Kind) }
-  : '(' TypeVar ':' Kind ')'  { ($2, unL $4) }
-  | '(' TypeVar ')'           { ($2, K.TU) }
-  | TypeVar                   { ($1, K.TU) }
+KindBind :: { Located (TypeVar PStage, K.Kind) }
+  : '(' TypeVar ':' Kind ')'  { ($1 `runion` $5) @- (unL $2, unL $4) }
+  | '(' TypeVar ')'           { ($1 `runion` $3) @- (unL $2, K.TU) }
+  | TypeVar                   { $1 @- (unL $1, K.TU) }
 
 KindedTVar :: { (SrcRange,  TypeVar PStage, Maybe K.Kind) }
   : TypeName ':' Kind { ($1 `runion` $3, unL $1, Just (unL $3)) }

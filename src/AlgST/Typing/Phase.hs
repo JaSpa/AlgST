@@ -14,11 +14,11 @@ import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Module (Module)
 import AlgST.Syntax.Name
-import AlgST.Syntax.Phases
+import AlgST.Syntax.Phases hiding (Located, unL)
 import AlgST.Syntax.Traversal
 import AlgST.Syntax.Tree
 import AlgST.Syntax.Type qualified as T
-import AlgST.Util.SourceLocation (SrcRange)
+import AlgST.Util.SourceLocation
 import Data.Functor.Const
 import Data.Functor.Identity
 import Data.Void
@@ -73,17 +73,18 @@ instance Unparse TcExpX where
 -- | Replaces @"AlgST.Syntax.Type".'T.Con'@/@"AlgST.Syntax.Type".'T.App'@
 -- combinations after type checking.
 data TypeRef = TypeRef
-  { typeRefPos :: Pos,
-    typeRefName :: !(TypeVar TcStage),
+  { typeRefName :: !(TypeVar TcStage),
     -- | Constructor names excluded from this type.
     typeRefExcl :: !(TcNameMap Values Pos),
     typeRefArgs :: [TcType],
-    typeRefKind :: !K.Kind
+    typeRefKind :: !K.Kind,
+    typeRefNameRange :: !SrcRange
   }
   deriving stock (Lift)
 
-instance HasPos TypeRef where
-  pos = typeRefPos
+instance HasRange TypeRef where
+  getStartLoc = getStartLoc . typeRefNameRange
+  getEndLoc tr = maximum $ getEndLoc (typeRefNameRange tr) : fmap getEndLoc (typeRefArgs tr)
 
 instance SynTraversable Tc Tc TypeRef TypeRef where
   traverseSyntax proxy ref = do
@@ -100,7 +101,7 @@ instance SynTraversable Tc Tc TypeRef TypeRef where
           typeRefArgs = args,
           typeRefExcl = excl,
           typeRefKind = typeRefKind ref,
-          typeRefPos = typeRefPos ref
+          typeRefNameRange = typeRefNameRange ref
         }
 
 instance Unparse TypeRef where
@@ -179,17 +180,17 @@ type instance E.XFork_  Tc = Pos
 type instance E.XExp    Tc = TcExpX
 type instance E.XBind   Tc = Pos
 
-type instance T.XUnit    Tc = Pos
-type instance T.XArrow   Tc = Pos
-type instance T.XPair    Tc = Pos
-type instance T.XSession Tc = Pos
-type instance T.XEnd     Tc = Pos
-type instance T.XForall  Tc = Pos
+type instance T.XUnit    Tc = SrcRange
+type instance T.XArrow   Tc = SrcRange
+type instance T.XPair    Tc = SrcRange
+type instance T.XSession Tc = SrcRange
+type instance T.XEnd     Tc = SrcRange
+type instance T.XForall  Tc = SrcRange
 type instance T.XVar     Tc = Located K.Kind
 type instance T.XCon     Tc = Void  -- Con/App nodes are replaced by TypeRef nodes.
 type instance T.XApp     Tc = Void
-type instance T.XDualof  Tc = Pos
-type instance T.XNegate  Tc = Pos
+type instance T.XDualof  Tc = SrcRange
+type instance T.XNegate  Tc = SrcRange
 type instance T.XType    Tc = TypeRef
 
 type instance D.XAliasDecl    Tc = Void  -- Type aliases have been expanded after type checking.

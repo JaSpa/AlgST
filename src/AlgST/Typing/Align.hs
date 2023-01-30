@@ -21,6 +21,7 @@ import AlgST.Syntax.Phases
 import AlgST.Syntax.Type qualified as T
 import AlgST.Typing.Phase
 import AlgST.Util.PartialOrd
+import AlgST.Util.SourceLocation (SrcRange)
 import Control.Applicative
 import Control.Monad
 import Data.Coerce
@@ -84,7 +85,7 @@ data AnnotKind a where
   AnnotPair    :: AnnotKind (T.XPair Tc)
   AnnotArrow   :: AnnotKind (T.XArrow Tc)
   AnnotForall  :: AnnotKind (T.XForall Tc)
-  AnnotBind    :: AnnotKind Pos
+  AnnotBind    :: AnnotKind SrcRange
   AnnotSession :: AnnotKind (T.XSession Tc)
   AnnotEnd     :: AnnotKind (T.XEnd Tc)
   AnnotDualof  :: AnnotKind (T.XDualof Tc)

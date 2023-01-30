@@ -81,21 +81,21 @@ type instance E.XNew    Parse = Void  -- BuiltinNew
 type instance E.XSelect Parse = Pos
 type instance E.XFork   Parse = Void  -- BuiltinFork
 type instance E.XFork_  Parse = Void  -- BuiltinFork_
-type instance E.XExp    Parse = Either ParsedBuiltin (OperatorSequence Parse)
+type instance E.XExp    Parse = Either ParsedBuiltin (SomeOperatorSequence Parse PExp)
 
 type instance E.XBind Parse = Pos
 
-type instance T.XUnit    Parse = Pos
-type instance T.XArrow   Parse = Pos
-type instance T.XPair    Parse = Pos
-type instance T.XSession Parse = Pos
-type instance T.XEnd     Parse = Pos
-type instance T.XForall  Parse = Pos
-type instance T.XVar     Parse = Pos
-type instance T.XCon     Parse = Pos
-type instance T.XApp     Parse = Pos
-type instance T.XDualof  Parse = Pos
-type instance T.XNegate  Parse = Pos
+type instance T.XUnit    Parse = SrcRange
+type instance T.XArrow   Parse = SrcRange
+type instance T.XPair    Parse = SrcRange
+type instance T.XSession Parse = SrcRange
+type instance T.XEnd     Parse = SrcRange
+type instance T.XForall  Parse = SrcRange
+type instance T.XVar     Parse = SrcRange
+type instance T.XCon     Parse = SrcRange
+type instance T.XApp     Parse = SrcRange
+type instance T.XDualof  Parse = SrcRange
+type instance T.XNegate  Parse = SrcRange
 type instance T.XType    Parse = Void
 
 type instance D.XAliasDecl    Parse = SrcRange

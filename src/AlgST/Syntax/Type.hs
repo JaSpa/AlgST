@@ -42,6 +42,7 @@ where
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Name
 import AlgST.Syntax.Phases
+import AlgST.Util.SourceLocation
 import GHC.Generics (Generic)
 import Language.Haskell.TH.Syntax (Lift)
 
@@ -145,10 +146,15 @@ deriving stock instance (ForallX Lift x) => Lift (Type x)
 
 deriving via Generically (Type x) instance (ForallX HasPos x) => HasPos (Type x)
 
+deriving via Generically (Type x) instance (ForallX HasRange x) => HasRange (Type x)
+
+instance (ForallX StoresRange x) => StoresRange (Type x) where
+  rangeL = genericRangeL
+
 data ProtocolSubset stage = ProtocolSubset
   { subsetComplement :: !Bool,
     subsetConstructors :: !(NameMapG stage Values Pos)
   }
   deriving stock (Generic)
 
-deriving stock instance () => Lift (ProtocolSubset x)
+deriving stock instance Lift (ProtocolSubset x)

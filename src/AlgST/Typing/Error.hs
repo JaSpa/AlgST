@@ -14,12 +14,14 @@ import AlgST.Syntax.Decl
 import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Name
+import AlgST.Syntax.Pos
 import AlgST.Syntax.Type qualified as T
 import AlgST.Typing.Align
 import AlgST.Typing.Monad
 import AlgST.Typing.Phase
 import AlgST.Util
 import AlgST.Util.ErrorMessage hiding (Errors)
+import AlgST.Util.SourceLocation (HasRange, needPLoc, needPos, needRange)
 import Control.Monad.Validate
 import Data.DList.DNonEmpty qualified as DNE
 import Data.List qualified as List
@@ -45,18 +47,18 @@ ifNothing :: MonadValidate Errors m => Diagnostic -> Maybe a -> m a
 ifNothing e = maybe (fatal e) pure
 
 unexpectedKind ::
-  (T.ForallX HasPos x, Unparse (T.XType x)) =>
+  (T.ForallX HasRange x) =>
   T.Type x ->
   K.Kind ->
   [K.Kind] ->
   Diagnostic
-unexpectedKind t kind hintKinds = PosError (pos t) (message ++ hint)
+unexpectedKind t kind hintKinds = PosError (needPos t) (message ++ hint)
   where
     message =
       [ Error "Unexpected kind",
         Error kind,
         Error "for type",
-        Error t
+        Error "‹‹show t››"
       ]
     hint = case nonEmpty hintKinds of
       Just hints ->
@@ -96,7 +98,7 @@ typeMismatch expr tyActual tyActualNF tyExpected tyExpectedNF =
 
 typeMismatchBind :: K.Bind stage a -> TcType -> RnExp -> Diagnostic
 typeMismatchBind (K.Bind p v _ _) t e =
-  PosError p $
+  PosError (needPos p) $
     errUnline
       [ [Error "Binding of type variable", Error v, Error "in expression"],
         [indent, Error e],
@@ -109,7 +111,7 @@ typeMismatchBind (K.Bind p v _ _) t e =
 -- better to have an error message at hand should it be needed than crashing
 -- the compiler.
 noNormalform :: TcType -> Diagnostic
-noNormalform t = PosError (pos t) [Error "Malformed type:", Error t]
+noNormalform t = PosError (needPos t) [Error "Malformed type:", Error t]
 {-# NOINLINE noNormalform #-}
 
 missingUse :: ProgVar TcStage -> Var -> Diagnostic
@@ -196,7 +198,7 @@ typeConstructorNParams loc ts !given !expected =
     [ Error "Invalid type application",
       ErrLine,
       Error "  ",
-      Error $ foldl1 (T.App loc) ts,
+      Error $ foldl1 (T.App (needRange loc)) ts,
       ErrLine,
       Error "Type constructor",
       Error $ NE.head ts,
@@ -229,7 +231,7 @@ cyclicAliases aliases =
     locSize = maximum (length . show <$> positions)
     positions = fmap expansionLoc aliases
     showLoc (show -> l) = l ++ ":" ++ replicate (locSize - length l) ' '
-    aliasHead name params = Error "type" : Error name : [Error p | (p, _) <- params]
+    aliasHead name params = Error "type" : Error name : [Error p | _ :@ (p, _) <- fmap needPLoc params]
 {-# NOINLINE cyclicAliases #-}
 
 invalidNominalKind :: Pos -> String -> TypeVar TcStage -> K.Kind -> NonEmpty K.Kind -> Diagnostic

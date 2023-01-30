@@ -19,94 +19,74 @@ import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
-import AlgST.Util.ErrorMessage
-import Control.Category ((>>>))
+import AlgST.Syntax.Pos qualified as P
+import AlgST.Util.Diagnose qualified as D
+import AlgST.Util.SourceLocation
 import Control.Monad
 import Control.Monad.Trans
 import Control.Monad.Validate
-import Data.DList.DNonEmpty qualified as DNE
+import Data.CallStack
 import Data.Foldable
+import Data.Function
 import Data.HashMap.Strict qualified as HM
 import Data.List.NonEmpty (NonEmpty (..))
+import Data.These.Combinators
 
 data OpGrouping op = OpGrouping
   { leadingExpr :: Maybe RnExp,
     opExprPairs :: [(op, RnExp)],
-    trailingOp :: Maybe op
+    trailingOp :: Maybe op,
+    opsRange :: SrcRange
   }
   deriving stock (Show, Functor, Foldable, Traversable)
 
 data ResolvedOp = ResolvedOp
-  { opLoc :: Pos,
-    opName :: NameR Values,
+  { opName :: NameR Values,
     opExpr :: RnExp,
     opPrec :: Precedence,
     opAssoc :: Associativity
   }
 
-instance HasPos ResolvedOp where
-  pos = opLoc
+instance HasRange ResolvedOp where
+  getRange = needRange . opExpr
 
-instance ErrorMsg ResolvedOp where
-  msg = opName >>> msg
-  msgStyling = opName >>> msgStyling
+type Unresolved = RnExp
+
+type UnresolvedSeq h = OperatorSequence h Rn Unresolved
+
+type ResolvedSeq h = OperatorSequence h Rn ResolvedOp
 
 noTypeArgs :: ResolvedOp -> Bool
 noTypeArgs (opExpr -> E.Var {}) = True
 noTypeArgs _ = False
 
-rewriteOperatorSequence :: OperatorSequence Rn -> RnM RnExp
-rewriteOperatorSequence =
-  groupOperators
-    >>> traverse resolveOperator
-    >=> foldGroupedOperators
+operatorBaseName :: HasCallStack => RnExp -> RnName Values
+operatorBaseName (E.Var _ n) = n
+operatorBaseName (E.TypeApp _ e _) = operatorBaseName e
+operatorBaseName e = error $ "internal error: expression is not an operator ‘" ++ show e ++ "’"
 
-groupOperators :: OperatorSequence Rn -> OpGrouping RnExp
-groupOperators = \case
-  OperandFirst rs (e :| es) ->
-    OpGrouping
-      { leadingExpr = Just e,
-        opExprPairs = pairs es,
-        trailingOp = rs
-      }
-  OperatorFirst rs ne ->
-    OpGrouping
-      { leadingExpr = Nothing,
-        opExprPairs = pairs (toList ne),
-        trailingOp = rs
-      }
-  where
-    pairs (a : b : xs) = (a, b) : pairs xs
-    pairs _ = []
+rewriteOperatorSequence :: UnresolvedSeq h -> RnM RnExp
+rewriteOperatorSequence = traverse resolveOperator >=> foldGroupedOperators
 
-extractOperator :: RnExp -> Maybe (Pos, NameR Values)
-extractOperator (E.Var p v) = Just (p, v)
-extractOperator (E.TypeApp _ e _) = extractOperator e
-extractOperator _ = Nothing
-
-resolveOperator :: MonadValidate DErrors m => RnExp -> m ResolvedOp
-resolveOperator e = do
-  (opLoc, opName) <-
-    refuteNothing invalidOpErr $
-      extractOperator e
+resolveOperator :: D.MonadErrors m => Unresolved -> m ResolvedOp
+resolveOperator op = do
+  let name = operatorBaseName op
   (prec, assoc) <-
-    refuteNothing (unknownOpErr opLoc opName) $
-      HM.lookup opName B.builtinOperators
+    D.failNothing unknownOpErr $
+      HM.lookup name B.builtinOperators
   pure
     ResolvedOp
-      { opLoc = opLoc,
-        opName = opName,
-        opExpr = e,
+      { opName = name,
+        opExpr = op,
         opPrec = prec,
         opAssoc = assoc
       }
   where
-    refuteNothing e =
-      maybe (refute (DNE.singleton e)) pure
-    invalidOpErr =
-      PosError (pos e) [Error "Invalid operator", Error e]
-    unknownOpErr loc name =
-      PosError loc [Error "Unknown operator", Error name]
+    unknownOpErr =
+      D.err
+        (needRange op)
+        "unknown operator"
+        "operator has no associativity/precedence information"
 
 data Prec = MinPrec | Prec !Precedence | MaxPrec
   deriving (Eq, Ord, Show)
@@ -115,18 +95,19 @@ instance Bounded Prec where
   minBound = MinPrec
   maxBound = MaxPrec
 
-foldGroupedOperators :: OpGrouping ResolvedOp -> RnM RnExp
-foldGroupedOperators = \case
-  OpGrouping Nothing [] _ ->
-    -- The parser handles a single operator. See the 'EOps' production.
-    error "internal parsing error: operator sequence without operands"
-  OpGrouping Nothing ((op, _) : _) _ ->
-    refute $ DNE.singleton $ errorUnsupportedRightSection op
-  OpGrouping (Just e) ops mopr ->
-    foldOperators e ops mopr
+foldGroupedOperators :: ResolvedSeq h -> RnM RnExp
+foldGroupedOperators (OpSeqO _ ((op, _) :| _) _) =
+  -- The reason being that we don't know the types involved to do a proper
+  -- desugaring into a lambda abstraction.
+  --
+  -- TODO: Either include a proper AST node for the typechecker to resolve or
+  -- move operator folding into the typechecking stage.
+  D.fatalError $ errorUnsupportedRightSection op
+foldGroupedOperators (OpSeqE r e tail) =
+  foldOperators r e (maybe [] toList (justHere tail)) (justThere tail)
 
-foldOperators :: RnExp -> [(ResolvedOp, RnExp)] -> Maybe ResolvedOp -> RnM RnExp
-foldOperators e0 ops0 = \case
+foldOperators :: SrcRange -> RnExp -> [(ResolvedOp, RnExp)] -> Maybe ResolvedOp -> RnM RnExp
+foldOperators sequenceRange e0 ops0 = \case
   Nothing ->
     -- Ordinary operator chain.
     --
@@ -137,9 +118,9 @@ foldOperators e0 ops0 = \case
   Just secOp -> do
     -- Operator section.
     --
-    -- We use the operator to the right as the starting precedence. Should `go`
-    -- not consume all operator-operand pairs we emit an error. Such a section
-    -- could be for example
+    -- We use the operator to the right as the starting precedence. We emit an
+    -- error should `go` not consume all operator-operand pairs. Such a section
+    -- could be, for example,
     --
     --    (3 + 4 *)
     --
@@ -159,7 +140,7 @@ foldOperators e0 ops0 = \case
         -- All fine. Construct the final partial application.
         buildOpApplication secOp e Nothing
       (op, _) : _ ->
-        refute . pure $ errorPrecConflict secOp op
+        refute . pure $ errorPrecConflict sequenceRange secOp op
   where
     -- The 'Side' specifies wether parsing continues on the left or the right
     -- of the operator.
@@ -169,11 +150,11 @@ foldOperators e0 ops0 = \case
     nextPrec :: Side -> ResolvedOp -> Prec
     nextPrec side op
       | opAssoc op /= NA && opAssoc op /= select side L R =
-        if opPrec op == maxBound
-          then MaxPrec
-          else Prec $ succ $ opPrec op
+          if opPrec op == maxBound
+            then MaxPrec
+            else Prec $ succ $ opPrec op
       | otherwise =
-        Prec $ opPrec op
+          Prec $ opPrec op
 
     go ::
       RnExp ->
@@ -184,11 +165,11 @@ foldOperators e0 ops0 = \case
     go lhs minPrec mprev ((op, rhs) : ops)
       | Just prevOp <- mprev,
         minPrec == Prec (opPrec op) && opAssoc prevOp == NA =
-        refute $ DNE.singleton $ errorNonAssocOperators prevOp op
+          D.fatalError $ errorNonAssocOperators prevOp op
       | minPrec <= Prec (opPrec op) = do
-        (rhs', ops') <- go rhs (nextPrec Right op) (Just op) ops
-        res <- buildOpApplication op lhs (Just rhs')
-        go res minPrec (Just op) ops'
+          (rhs', ops') <- go rhs (nextPrec Right op) (Just op) ops
+          res <- buildOpApplication op lhs (Just rhs')
+          go res minPrec (Just op) ops'
     go lhs _ _ ops =
       pure (lhs, ops)
 
@@ -197,101 +178,82 @@ buildOpApplication op lhs mrhs
   | -- (<|)
     opName op == B.opPipeBwd && noTypeArgs op,
     Just rhs <- mrhs =
-    -- Desugar operator to direct function application.
-    pure $ E.App (pos op) lhs rhs
+      -- Desugar operator to direct function application.
+      pure $ E.App (needPos op) lhs rhs
   | -- (|>)
     opName op == B.opPipeFwd && noTypeArgs op,
     Just rhs <- mrhs =
-    -- Desugar operator to (flipped) direct function application.
-    pure $ E.App (pos op) rhs lhs
+      -- Desugar operator to (flipped) direct function application.
+      pure $ E.App (needPos op) rhs lhs
   | -- (<&>)
     opName op == B.opMapAfter && noTypeArgs op,
     Just rhs <- mrhs = lift . lift $ do
-    -- Desugar to
-    --    let (a, c) = lhs in (rhs a, c)
-    let loc = pos op
-    a <- freshResolvedU $ Unqualified "a"
-    c <- freshResolvedU $ Unqualified "c"
-    pure
-      . E.PatLet loc (op @- B.conPair) [op @- a, op @- c] lhs
-      $ E.Pair loc (E.App loc rhs (E.Var loc a)) (E.Var loc c)
+      -- Desugar to
+      --    let (a, c) = lhs in (rhs a, c)
+      let loc = needPos op
+      a <- freshResolvedU $ Unqualified "a"
+      c <- freshResolvedU $ Unqualified "c"
+      pure
+        . E.PatLet loc (needPos op P.@- B.conPair) [needPos op P.@- a, needPos op P.@- c] lhs
+        $ E.Pair loc (E.App loc rhs (E.Var loc a)) (E.Var loc c)
   | -- (<*>)
     opName op == B.opAppComb && noTypeArgs op,
     Just rhs <- mrhs = lift . lift $ do
-    -- Desugar to:
-    -- \c1 -> let (f, c2) = lhs c1 in let (x, c3) = rhs c2 in (f x, c3)
-    let po = pos op
-    c1 <- freshResolvedU $ Unqualified "c1"
-    c2 <- freshResolvedU $ Unqualified "c2"
-    c3 <- freshResolvedU $ Unqualified "c3"
-    f <- freshResolvedU $ Unqualified "f"
-    x <- freshResolvedU $ Unqualified "x"
-    pure
-      . E.Abs po
-      . E.Bind po K.Lin c1 Nothing
-      . E.PatLet po (op @- B.conPair) [op @- f, op @- c2] (E.App po lhs (E.Var po c1))
-      . E.PatLet po (op @- B.conPair) [op @- x, op @- c3] (E.App po rhs (E.Var po c2))
-      $ E.Pair po (E.App po (E.Var po f) (E.Var po x)) (E.Var po c3)
+      -- Desugar to:
+      -- \c1 -> let (f, c2) = lhs c1 in let (x, c3) = rhs c2 in (f x, c3)
+      let po = needPos op
+      c1 <- freshResolvedU $ Unqualified "c1"
+      c2 <- freshResolvedU $ Unqualified "c2"
+      c3 <- freshResolvedU $ Unqualified "c3"
+      f <- freshResolvedU $ Unqualified "f"
+      x <- freshResolvedU $ Unqualified "x"
+      pure
+        . E.Abs po
+        . E.Bind po K.Lin c1 Nothing
+        . E.PatLet po (needPos op P.@- B.conPair) [needPos op P.@- f, needPos op P.@- c2] (E.App po lhs (E.Var po c1))
+        . E.PatLet po (needPos op P.@- B.conPair) [needPos op P.@- x, needPos op P.@- c3] (E.App po rhs (E.Var po c2))
+        $ E.Pair po (E.App po (E.Var po f) (E.Var po x)) (E.Var po c3)
   | otherwise = do
-    let appLhs = E.App (pos lhs) (opExpr op) lhs
-    pure $ maybe appLhs (E.App <$> pos <*> pure appLhs <*> id) mrhs
+      let appLhs = E.App (needPos lhs) (opExpr op) lhs
+      pure $ maybe appLhs (E.App <$> needPos <*> pure appLhs <*> id) mrhs
 
 type Side = forall a. a -> Either a a
 
 select :: Side -> b -> b -> b
 select side = either const (const id) . side
 
-errorUnsupportedRightSection :: ResolvedOp -> Diagnostic
+errorUnsupportedRightSection :: ResolvedOp -> D.Diagnostic
 errorUnsupportedRightSection op =
-  -- The reason we can't support right sections yet: we would have to generate
-  -- a lambda abstraction which requires for us to know the type we have to
-  -- give the parameter. At the current stage we don't know this type yet.
-  PosError
-    (pos op)
-    [ Error "Operator",
-      Error op,
-      Error "is missing its right operand.",
-      ErrLine,
-      Error "(Right sections are not yet supported.)"
-    ]
+  D.err
+    (getRange op)
+    "unsupported right section"
+    "operator is missing its left operand"
+    & D.note "Right sections are not yet supported."
+    & D.hint "Write an explicit lambda abstraction."
 {-# NOINLINE errorUnsupportedRightSection #-}
 
-errorNonAssocOperators :: ResolvedOp -> ResolvedOp -> Diagnostic
+errorNonAssocOperators :: ResolvedOp -> ResolvedOp -> D.Diagnostic
 errorNonAssocOperators v1 v2 =
-  PosError
-    (pos v2)
-    [ Error "Non-associative operators",
-      ErrLine,
-      Error "   ",
-      Error v1,
-      Error "at",
-      Error (pos v1),
-      ErrLine,
-      Error "and",
-      Error v2,
-      Error "at",
-      Error (pos v2),
-      ErrLine,
-      Error "are used next to each other.",
-      ErrLine,
-      ErrLine,
-      Error "Use parentheses to explicitly specify the associativity."
-    ]
+  -- TODO: can we include the outer arguments in the range?
+  D.err
+    (v1 `runion` v2)
+    "associativity conflict"
+    "non-associative operators with equal precedence are used next to each other"
+    & D.context (getRange v1 `min` getRange v2) "operator #1"
+    & D.context (getRange v1 `max` getRange v2) "operator #2"
+    & parensHint
 {-# NOINLINE errorNonAssocOperators #-}
 
-errorPrecConflict :: ResolvedOp -> ResolvedOp -> Diagnostic
-errorPrecConflict secOp otherOp =
-  PosError
-    (pos secOp)
-    [ Error "The operator",
-      Error secOp,
-      Error "of a section must have lower precedence",
-      ErrLine,
-      Error "        than",
-      Error otherOp,
-      Error "at",
-      Error $ pos otherOp,
-      ErrLine,
-      Error "Use parentheses to explicitly specify the associativity."
-    ]
+errorPrecConflict :: SrcRange -> ResolvedOp -> ResolvedOp -> D.Diagnostic
+errorPrecConflict sectionRange secOp otherOp =
+  D.err
+    sectionRange
+    "precedence conflict"
+    "the operator of a section must have lower predence than its operand"
+    & D.context (getRange otherOp) "this operator has higher precedence"
+    & D.context (getRange secOp) "than this section operator"
+    & parensHint
 {-# NOINLINE errorPrecConflict #-}
+
+parensHint :: D.Diagnostic -> D.Diagnostic
+parensHint = D.hint "Use parentheses to explicitly specify the associativity."

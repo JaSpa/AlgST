@@ -53,14 +53,14 @@ import AlgST.Syntax.Decl qualified as D
 import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Module
 import AlgST.Syntax.Name
+import AlgST.Syntax.Operators (SomeOperatorSequence (..))
 import AlgST.Syntax.Traversal
 import AlgST.Syntax.Type qualified as T
 import AlgST.Util
-import AlgST.Util.ErrorMessage (DErrors)
+import AlgST.Util.Diagnose (DErrors)
 import AlgST.Util.Lenses
 import AlgST.Util.Lenses qualified as L
-import AlgST.Util.SourceLocation (needPos)
-import AlgST.Util.SourceLocation qualified as R
+import AlgST.Util.SourceLocation
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Validate
@@ -103,7 +103,7 @@ importedRenameEnv stmt =
   case foldL importSelection stmt of
     ImportAll allLoc hides renames -> do
       -- The allSet contains all identifiers which are not hidden.
-      let allSet = allItems (R.needPos allLoc) \itemKey -> not $ HM.member itemKey hides
+      let allSet = allItems allLoc \itemKey -> not $ HM.member itemKey hides
       -- Add all the renamed items on top of the `allSet`.
       getAp $ pure allSet <> HM.foldMapWithKey (coerce addItem) renames
     ImportOnly renames ->
@@ -114,14 +114,14 @@ importedRenameEnv stmt =
     nameHereQ :: Unqualified -> NameW scope
     nameHereQ = Name (foldL importQualifier stmt)
 
-    singleBinding :: forall scope. Pos -> Unqualified -> NameR scope -> Bindings scope
+    singleBinding :: forall scope. SrcRange -> Unqualified -> NameR scope -> Bindings scope
     singleBinding loc unq nameR = do
       Bindings . Map.singleton (nameHereQ unq) $
         resolvedUnique
           (nameR & nameWrittenL .~ nameHereQ unq)
           (Error.AmbiguousImport loc importName)
 
-    allItems :: Pos -> (ImportKey -> Bool) -> RenameEnv
+    allItems :: SrcRange -> (ImportKey -> Bool) -> RenameEnv
     allItems allLoc include = do
       let item :: forall scope. (SingI scope) => Unqualified -> NameR scope -> Bindings scope
           item unqualified nameR =
@@ -132,8 +132,8 @@ importedRenameEnv stmt =
           mkBindings = HM.foldMapWithKey item $ importMap ^. scopeL . _TopLevels
       RenameEnv {rnTyVars = mkBindings, rnProgVars = mkBindings}
 
-    addItem :: ImportKey -> R.Located Unqualified -> m RenameEnv
-    addItem (scope, nameHere) item@(_ R.:@ nameThere) = withSomeSing scope \sscope -> do
+    addItem :: ImportKey -> Located Unqualified -> m RenameEnv
+    addItem (scope, nameHere) item@(_ :@ nameThere) = withSomeSing scope \sscope -> do
       let resolvedItem =
             importMap
               ^. scopeL' sscope
@@ -141,20 +141,20 @@ importedRenameEnv stmt =
                 . L.hashAt nameThere
       let unknownItemErr =
             Error.unknownImportItem
-              (pos stmt)
+              (getRange stmt)
               (foldL (fst . importTarget) stmt)
               scope
-              (R.needPLoc item)
+              item
       case resolvedItem of
         Nothing -> do
           mempty <$ addError unknownItemErr
         Just nameThereR -> do
-          let binding = singleBinding (needPos item) nameHere nameThereR
+          let binding = singleBinding (getRange item) nameHere nameThereR
           pure $ mempty & scopeL' sscope .~ binding
 
 -- | A simplified version of 'importedRenameEnv' which does no renaming and no
 -- hiding. This allows us to guarantee that no errors will occur.
-importAllEnv :: Pos -> ModuleName -> ModuleMap -> ModuleName -> RenameEnv
+importAllEnv :: SrcRange -> ModuleName -> ModuleMap -> ModuleName -> RenameEnv
 importAllEnv loc targetName targetMap qualifier =
   RenameEnv
     { rnTyVars = mkBindings,
@@ -178,26 +178,26 @@ importAllEnv loc targetName targetMap qualifier =
           (Error.AmbiguousImport loc targetName)
 
 instance SynTraversal RnM Parse Rn where
-  typeVariable _ x = fmap (T.Var x) . lookupName Error.Var x
-  valueVariable _ x = fmap (E.Var x) . lookupName Error.Var x
+  typeVariable _ x = fmap (T.Var x) . lookupName Error.Var (needRange x)
+  valueVariable _ x = fmap (E.Var x) . lookupName Error.Var (needRange x)
   bind _ vs = withBindings \f -> traverse f vs
 
   useConstructor _ loc w = case singByProxy w of
     -- Special check for value constructors: We have to resolve `(,)` to
     -- `conPair`.
     SValues | w == nameWritten Builtin.conPair -> pure Builtin.conPair
-    _ -> lookupName Error.Con loc w
+    _ -> lookupName Error.Con (needRange loc) w
 
   exprExtension pxy = \case
     Left parsedBuiltin ->
       E.Exp <$> traverseSyntax pxy parsedBuiltin
     Right ops -> do
-      rnOps <- traverseSyntax pxy ops
+      SomeOperatorSequence rnOps <- traverseSyntax pxy ops
       rewriteOperatorSequence rnOps
 
   typeExtension pxy = fmap T.Type . traverseSyntax pxy
 
-lookupName :: (SingI scope) => Error.NameKind -> Pos -> NameW scope -> RnM (NameR scope)
+lookupName :: (SingI scope) => Error.NameKind -> SrcRange -> NameW scope -> RnM (NameR scope)
 lookupName kind loc w = do
   resolve <- asks . view $ _2 . scopeL . _Bindings . at w
   case viewUniqueResolve <$> resolve of
@@ -209,13 +209,11 @@ lookupName kind loc w = do
       fatalError $ Error.ambiguousUsage loc kind w choices
 
 bindingParams :: D.Params PStage -> (D.Params RnStage -> RnM a) -> RnM a
-bindingParams params = withBindings \f ->
-  traverse (bitraverse (traverse f) pure) params
+bindingParams params = withBindings \f -> D.traverseParams f params
 
 bindingANames ::
   (Traversable f) => f (ANameG Written) -> (f (ANameG Resolved) -> RnM a) -> RnM a
-bindingANames vs = withBindings \bind ->
-  traverse (bitraverse bind bind) vs
+bindingANames vs = withBindings \bind -> traverse (bitraverse bind bind) vs
 {-# INLINEABLE bindingANames #-}
 
 withBindings ::
@@ -286,8 +284,7 @@ continueRename baseMap moduleName m =
 moduleTopLevels :: ModuleMap -> PModule -> Fresh (ModuleMap, RenameEnv)
 moduleTopLevels baseMap m = do
   let entry ::
-        -- (SingI scope, HasRange a) =>
-        (SingI scope) =>
+        (SingI scope, HasRange a) =>
         NameW scope ->
         a ->
         Fresh ((Unqualified, NameR scope), PartialResolve scope)
@@ -299,7 +296,7 @@ moduleTopLevels baseMap m = do
           Just n -> pure n
         pure
           ( (nameUnqualified nameW, nameR),
-            resolvedUnique nameR $ Error.AmbiguousDefine $ needPos decl
+            resolvedUnique nameR $ Error.AmbiguousDefine $ getRange decl
           )
   typs <- Map.traverseWithKey entry $ moduleTypes m
   vals <- Map.traverseWithKey entry $ moduleValues m

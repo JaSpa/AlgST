@@ -11,7 +11,6 @@ import AlgST.Syntax.Module
 import AlgST.Syntax.Name
 import AlgST.Typing
 import AlgST.Util.Diagnose qualified as D
-import AlgST.Util.Error
 import AlgST.Util.SourceManager
 import Control.Category ((>>>))
 import Control.Monad
@@ -50,11 +49,11 @@ parseTH modName baseMap srcLines = Code.do
   let check renamed = do
         let doCheck = checkWithModule mempty renamed \runTypeM checked ->
               (checked,) <$> runTypeM extractCheckContext
-        mapErrors runErrors $ mapValidateT lift doCheck
+        mapErrors (undefined runErrors) $ mapValidateT lift doCheck
   let checked = resolve mempty >>= \(RenameExtra f) -> f check
   case checked of
     Left errs -> Code.do
-      traverse_ (reportError . formatErrorMessages Plain "") errs
+      reportDiagnostics mgr errs
       [||(modmap, mempty, emptyModule)||]
     Right (tcmod, ctxt) ->
       [||(modmap, ctxt, tcmod)||]

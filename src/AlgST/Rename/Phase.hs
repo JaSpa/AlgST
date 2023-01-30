@@ -1,11 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module AlgST.Rename.Phase
-  ( module AlgST.Rename.Phase,
-    module AlgST.Syntax.Pos,
-  )
-where
+module AlgST.Rename.Phase where
 
 import AlgST.Parse.Phase (ParsedBuiltin)
 import AlgST.Syntax.Decl qualified as D
@@ -13,7 +9,6 @@ import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Module (Module)
 import AlgST.Syntax.Name
 import AlgST.Syntax.Phases
-import AlgST.Syntax.Pos
 import AlgST.Syntax.Type qualified as T
 import AlgST.Util.SourceLocation (SrcRange)
 import Data.Void
@@ -53,17 +48,17 @@ type instance E.XExp    Rn = ParsedBuiltin
 
 type instance E.XBind Rn = Pos
 
-type instance T.XUnit    Rn = Pos
-type instance T.XArrow   Rn = Pos
-type instance T.XPair    Rn = Pos
-type instance T.XSession Rn = Pos
-type instance T.XEnd     Rn = Pos
-type instance T.XForall  Rn = Pos
-type instance T.XVar     Rn = Pos
-type instance T.XCon     Rn = Pos
-type instance T.XApp     Rn = Pos
-type instance T.XDualof  Rn = Pos
-type instance T.XNegate  Rn = Pos
+type instance T.XUnit    Rn = SrcRange
+type instance T.XArrow   Rn = SrcRange
+type instance T.XPair    Rn = SrcRange
+type instance T.XSession Rn = SrcRange
+type instance T.XEnd     Rn = SrcRange
+type instance T.XForall  Rn = SrcRange
+type instance T.XVar     Rn = SrcRange
+type instance T.XCon     Rn = SrcRange
+type instance T.XApp     Rn = SrcRange
+type instance T.XDualof  Rn = SrcRange
+type instance T.XNegate  Rn = SrcRange
 type instance T.XType    Rn = Void
 
 type instance D.XAliasDecl    Rn = SrcRange

@@ -34,6 +34,7 @@ import AlgST.Syntax.Operators qualified as Op
 import AlgST.Syntax.Phases
 import AlgST.Syntax.Type qualified as T
 import Data.Bifunctor
+import Data.DList qualified as DL
 import Data.Foldable
 import Data.Functor.Identity
 import Data.HashMap.Strict qualified as HM
@@ -262,16 +263,21 @@ instance Unparse E.Lit where
       E.Char x -> show x
       E.String x -> show x
 
-instance (Unparse (E.XExp x), Unparse (T.XType x)) => Unparse (Op.OperatorSequence x) where
+instance (Unparse o, Unparse (E.XExp x), Unparse (T.XType x)) => Unparse (Op.OperatorSequence h x o) where
   unparse ops
     | Op.isSection ops = (maxRator, "(" ++ inner ++ ")")
     | otherwise = (opMinRator, inner)
     where
-      inner = unwords . fmap bracketComponent . toList $ case ops of
-        Op.OperandFirst _ ne -> ne
-        Op.OperatorFirst _ ne -> ne
+      -- This shows the operators in their parenthiszed version because that is
+      -- how the names are arranged in the operator epressions.
+      inner =
+        unwords . toList $
+          Op.foldOperatorSequence
+            bracketComponent
+            bracketComponent
+            ops
       bracketComponent e =
-        bracket (unparse e) Op.NA arrowRator
+        DL.singleton (bracket (unparse e) Op.NA arrowRator)
 
 unparseCase ::
   (Unparse (E.XExp x), Unparse (T.XType x), Foldable f, Foldable g) =>

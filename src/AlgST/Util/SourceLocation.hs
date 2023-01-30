@@ -1,4 +1,6 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE DeriveTraversable #-}
@@ -6,7 +8,12 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE QuantifiedConstraints #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TemplateHaskellQuotes #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -24,8 +31,11 @@ module AlgST.Util.SourceLocation
 
     -- * Extracting ranges
     HasRange (..),
+    StoresRange (..),
+    genericRangeL,
     Generically (..),
     GHasRange,
+    GStoresRange,
 
     -- * @ByteString@ interactions
     startLoc,
@@ -65,7 +75,10 @@ import Foreign
 import GHC.Foreign qualified as GHC
 import GHC.ForeignPtr
 import GHC.Generics
+import GHC.TypeLits
 import Language.Haskell.TH.Syntax (Lift (..))
+import Lens.Family2 hiding (to)
+import Lens.Family2.Unchecked (lens)
 import System.IO qualified as IO
 import System.IO.Unsafe
 
@@ -176,11 +189,20 @@ class HasRange a where
   getEndLoc :: a -> SrcLoc
   getEndLoc (getRange -> SrcRange _ x) = x
 
+class HasRange a => StoresRange a where
+  rangeL :: Lens' a SrcRange
+
 instance HasRange SrcRange where
   getRange = id
 
+instance StoresRange SrcRange where
+  rangeL = id
+
 instance HasRange Void where
   getRange = absurd
+
+instance StoresRange Void where
+  rangeL = lens absurd const
 
 instance (HasRange a, HasRange b) => HasRange (Either a b) where
   getRange = either getRange getRange
@@ -189,6 +211,21 @@ instance (HasRange a, HasRange b) => HasRange (Either a b) where
 
 instance (Generic a, GHasRange (Rep a)) => HasRange (Generically a) where
   getRange (Generically a) = getRangeRep (from a)
+
+genericRangeL :: (Generic a, GStoresRange (Rep a), HasRange a) => Lens' a SrcRange
+genericRangeL = lens getRange \a -> to . updateRangeRep (from a)
+
+type GenericallyStoresRangeError a =
+  ( Text "Deriving ‘"
+      :<>: ShowType (StoresRange a)
+      :<>: Text "’ via ‘"
+      :<>: ShowType (Generically a)
+      :<>: Text "’ is not possible"
+  )
+    :$$: Text "Use ‘genericRangeL’ instead as an implementation for ‘rangeL’"
+
+instance (TypeError (GenericallyStoresRangeError a), Generic a, GStoresRange (Rep a)) => StoresRange (Generically a) where
+  rangeL = error "not possible"
 
 -- | Extracts the @SrcRange@ from the leftmost component of each constructor.
 class GHasRange f where
@@ -207,6 +244,22 @@ instance GHasRange f => GHasRange (M1 i c f) where
 instance HasRange c => GHasRange (K1 i c) where
   getRangeRep (K1 c) = getRange c
 
+class GHasRange f => GStoresRange f where
+  updateRangeRep :: f a -> SrcRange -> f a
+
+instance (GStoresRange f, GStoresRange g) => GStoresRange (f :+: g) where
+  updateRangeRep (L1 f) = L1 . updateRangeRep f
+  updateRangeRep (R1 g) = R1 . updateRangeRep g
+
+instance GStoresRange f => GStoresRange (f :*: g) where
+  updateRangeRep (f :*: g) = (:*: g) . updateRangeRep f
+
+instance GStoresRange f => GStoresRange (M1 i c f) where
+  updateRangeRep (M1 f) = M1 . updateRangeRep f
+
+instance StoresRange c => GStoresRange (K1 i c) where
+  updateRangeRep (K1 c) r = K1 $ c & rangeL .~ r
+
 -- | Attaches a position to a value of type @a@.
 --
 -- Ordering/Equality is not defined for this type to avoid confusion wether the
@@ -219,6 +272,9 @@ data Located a = !SrcRange :@ a
 
 instance HasRange (Located a) where
   getRange (r :@ _) = r
+
+instance StoresRange (Located a) where
+  rangeL = lens getRange \(_ :@ a) r -> r :@ a
 
 infix 9 :@, @-
 
@@ -239,12 +295,16 @@ p @- a = getRange p :@ a
 
 needPos :: HasCallStack => a -> P.Pos
 needPos = undefined
+{-# WARNING needPos "compat placeholder" #-}
 
 needRange :: HasCallStack => a -> SrcRange
 needRange = undefined
+{-# DEPRECATED needRange "compat placeholder" #-}
 
 needLoc :: HasCallStack => P.Located a -> Located a
 needLoc = undefined
+{-# DEPRECATED needLoc "compat placeholder" #-}
 
 needPLoc :: HasCallStack => Located a -> P.Located a
 needPLoc = undefined
+{-# DEPRECATED needPLoc "compat placeholder" #-}

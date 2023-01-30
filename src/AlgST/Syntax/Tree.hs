@@ -161,15 +161,20 @@ instance (T.ForallX LabeledTree x, E.ForallX LabeledTree x) => LabeledTree (E.Ex
         tree "Exp.Exp" [labeledTree x]
 
 instance
-  (T.ForallX LabeledTree x, E.ForallX LabeledTree x) =>
-  LabeledTree (OperatorSequence x)
+  (T.ForallX LabeledTree x, E.ForallX LabeledTree x, LabeledTree o) =>
+  LabeledTree (OperatorSequence h x o)
   where
   labeledTree =
     pure
       . tree "OperatorSequence"
-      . fmap labeledTree
-      . toList
-      . opSeqExpressions
+      . pure
+      . foldOperatorSequence labeledTree labeledTree
+
+instance
+  (T.ForallX LabeledTree x, E.ForallX LabeledTree x, LabeledTree o) =>
+  LabeledTree (SomeOperatorSequence x o)
+  where
+  labeledTree (SomeOperatorSequence ops) = labeledTree ops
 
 instance (T.ForallX LabeledTree x) => LabeledTree (T.Type x) where
   labeledTree =
@@ -268,7 +273,7 @@ nominalDeclTree f D.TypeNominal {..} =
   ]
 
 paramsTree :: D.Params stage -> [LabTree]
-paramsTree ps = [leaf $ "(" ++ describeName p ++ ":" ++ show k ++ ")" | (_ :@ p, k) <- ps]
+paramsTree ps = [leaf $ "(" ++ describeName p ++ ":" ++ show k ++ ")" | _ :@ (p, k) <- ps]
 
 instance (T.ForallX LabeledTree x) => LabeledTree (D.SignatureDecl x) where
   labeledTree D.SignatureDecl {signatureType = ty} =

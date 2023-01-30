@@ -65,6 +65,7 @@ import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
 import AlgST.Syntax.Phases
 import AlgST.Syntax.Type qualified as T
+import AlgST.Util.SourceLocation (HasRange, SrcRange, needPos)
 import Control.Applicative
 import Control.Category ((>>>))
 import Control.Monad.Eta
@@ -73,7 +74,6 @@ import Data.Bitraversable
 import Data.Functor.Classes
 import Data.Functor.Compose
 import Data.Functor.Identity
-import Data.List.NonEmpty qualified as NE
 import Data.Map.Strict qualified as Map
 import Data.Maybe
 import Data.Monoid qualified as M
@@ -231,7 +231,7 @@ data Substitutions x = Substitutions
 
 instance
   ( HasPos (E.XCon x),
-    HasPos (T.XCon x),
+    HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y,
     XStage x ~ XStage y
@@ -357,6 +357,9 @@ instance SynTraversable x y Void a where
 instance SynTraversable x y Pos Pos where
   traverseSyntax _ = pure
 
+instance SynTraversable x y SrcRange SrcRange where
+  traverseSyntax _ = pure
+
 instance
   (SynTraversable x y a a', SynTraversable x y b b') =>
   SynTraversable x y (Either a b) (Either a' b')
@@ -365,7 +368,7 @@ instance
 
 instance
   ( HasPos (E.XCon x),
-    HasPos (T.XCon x),
+    HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y
   ) =>
@@ -462,7 +465,7 @@ instance
 
 instance
   ( HasPos (E.XCon x),
-    HasPos (T.XCon x),
+    HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y
   ) =>
@@ -480,7 +483,7 @@ instance
 
 instance
   ( HasPos (E.XCon x),
-    HasPos (T.XCon x),
+    HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y,
     Traversable f,
@@ -495,7 +498,7 @@ instance
 
 instance
   ( HasPos (E.XCon x),
-    HasPos (T.XCon x),
+    HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y,
     Traversable f
@@ -513,7 +516,7 @@ instance
 
 instance
   ( HasPos (E.XCon x),
-    HasPos (T.XCon x),
+    HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y
   ) =>
@@ -529,24 +532,44 @@ instance
 
 instance
   ( HasPos (E.XCon x),
-    HasPos (T.XCon x),
+    HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
-    T.PointwiseX (SynTraversable x y) x y
+    T.PointwiseX (SynTraversable x y) x y,
+    SynTraversable x y o o',
+    h ~ h'
   ) =>
-  SynTraversable x y (OperatorSequence x) (OperatorSequence y)
+  SynTraversable x y (OperatorSequence h x o) (OperatorSequence h' y o')
   where
   traverseSyntax pxy = \case
-    -- The `rs` should not be traversed because they are references to the
-    -- last element in `ne`.
-    OperandFirst rs ne -> do
-      ne' <- traverse (traverseSyntax pxy) ne
-      pure $ OperandFirst (NE.last ne' <$ rs) ne'
-    OperatorFirst rs ne -> do
-      ne' <- traverse (traverseSyntax pxy) ne
-      pure $ OperatorFirst (NE.last ne' <$ rs) ne'
+    OpSeqE r e tail ->
+      OpSeqE r
+        <$> traverseSyntax pxy e
+        <*> bitraverse
+          (traversePairs pxy)
+          (traverseSyntax pxy)
+          tail
+    OpSeqO r pairs mo ->
+      OpSeqO r
+        <$> traversePairs pxy pairs
+        <*> traverse (traverseSyntax pxy) mo
+    where
+      traversePairs p =
+        traverse (bitraverse (traverseSyntax p) (traverseSyntax p))
 
 instance
-  ( HasPos (T.XCon x),
+  ( HasPos (E.XCon x),
+    HasRange (T.XCon x),
+    E.PointwiseX (SynTraversable x y) x y,
+    T.PointwiseX (SynTraversable x y) x y,
+    SynTraversable x y o o'
+  ) =>
+  SynTraversable x y (SomeOperatorSequence x o) (SomeOperatorSequence y o')
+  where
+  traverseSyntax pxy (SomeOperatorSequence ops) =
+    SomeOperatorSequence <$> traverseSyntax pxy ops
+
+instance
+  ( HasRange (T.XCon x),
     T.PointwiseX (SynTraversable x y) x y
   ) =>
   SynTraversable x y (T.Type x) (T.Type y)
@@ -584,7 +607,7 @@ instance
     T.Con x v ps ->
       T.Con
         <$> traverseSyntax pxy x
-        <*> useConstructor pxy (pos x) v
+        <*> useConstructor pxy (needPos x) v
         <*> traverse (traverseSyntax pxy) ps
     T.App x t u ->
       T.App

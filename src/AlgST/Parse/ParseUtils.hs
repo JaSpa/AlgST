@@ -41,6 +41,7 @@ module AlgST.Parse.ParseUtils
     errorDuplicateBind,
     errorInvalidKind,
     errorUnexpectedTokens,
+    errorMissingOperand,
     errorUnknownPragma,
 
     -- * Operators
@@ -96,6 +97,7 @@ import Data.Bifunctor
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.DList.DNonEmpty qualified as DNE
+import Data.Foldable
 import Data.Function
 import Data.Functor.Identity
 import Data.HashMap.Strict qualified as HM
@@ -167,18 +169,26 @@ fatalError !d = refute (pure d)
 
 data Parenthesized
   = TopLevel
-  | InParens
+  | InParens !SrcRange
   deriving (Eq)
 
-sectionsParenthesized :: Parenthesized -> OperatorSequence Parse -> Parser PExp
-sectionsParenthesized TopLevel ops | Just op <- sectionOperator ops = do
-  addError $
-    D.err (needRange op) "missing argument" "operator is missing an argument"
-      -- The range for the fix should include operator + the one argument we have
-      & D.fix (needRange op) "wrap it in parentheses for an operator section"
-  pure $ E.Exp $ Right ops
-sectionsParenthesized _ ops = do
-  pure $ E.Exp $ Right ops
+sectionsParenthesized :: (SingI h) => Parenthesized -> OperatorSequence h Parse PExp -> Parser PExp
+sectionsParenthesized TopLevel ops = do
+  traverse_ (addError . errorMissingOperand (Just (needRange ops))) (sectionOperator ops)
+  pure $ E.Exp $ Right $ SomeOperatorSequence ops
+sectionsParenthesized (InParens r) ops = do
+  -- If we have a section we want to extend the sequence's range to include the
+  -- parentheses.
+  let extendRange = if isSection ops then id else rangeL %~ (<> r)
+  pure $ E.Exp $ Right $ SomeOperatorSequence $ extendRange ops
+
+errorMissingOperand :: Maybe SrcRange -> o -> D.Diagnostic
+errorMissingOperand sectionRange op =
+  D.err (needRange op) "missing operand" "this operator is missing an operand"
+    & maybe id sectionFix sectionRange
+  where
+    sectionFix r = D.fix r "wrap it in parentheses for an operator section"
+{-# NOINLINE errorMissingOperand #-}
 
 typeConstructors ::
   TypeVar PStage ->

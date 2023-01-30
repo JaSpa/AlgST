@@ -1,5 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveLift #-}
 {-# LANGUAGE DerivingStrategies #-}
@@ -9,35 +7,32 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
-module AlgST.Rename.Error where
+module AlgST.Rename.Error
+  ( module AlgST.Rename.Error,
+    D.MonadErrors,
+    D.addError,
+    D.fatalError,
+  )
+where
 
 import AlgST.Syntax.Name
-import AlgST.Syntax.Pos
-import AlgST.Util
-import AlgST.Util.ErrorMessage
-import Control.Monad.Validate
-import Data.DList.DNonEmpty qualified as DNE
-import Data.List qualified as List
+import AlgST.Util.Diagnose qualified as D
+import AlgST.Util.SourceLocation
+import Data.Coerce
+import Data.Function
+import Data.Monoid
 import Data.Singletons
 import Language.Haskell.TH.Syntax (Lift)
 
-type MonadErrors = MonadValidate DErrors
-
-addError :: MonadErrors m => Diagnostic -> m ()
-addError !e = dispute (DNE.singleton e)
-
-fatalError :: MonadErrors m => Diagnostic -> m a
-fatalError !e = refute (DNE.singleton e)
-
 data AmbiguousOrigin
-  = AmbiguousImport !Pos !ModuleName
-  | AmbiguousDefine !Pos
+  = AmbiguousImport !SrcRange !ModuleName
+  | AmbiguousDefine !SrcRange
   deriving stock (Show, Lift)
 
-instance HasPos AmbiguousOrigin where
-  pos = \case
-    AmbiguousImport p _ -> p
-    AmbiguousDefine p -> p
+instance HasRange AmbiguousOrigin where
+  getRange = \case
+    AmbiguousImport r _ -> r
+    AmbiguousDefine r -> r
 
 data NameKind = Con | Var
 
@@ -47,56 +42,34 @@ nameKind k _ =
     (case k of Con -> "type"; Var -> "type variable")
     (case k of Con -> "constructor"; Var -> "variable")
 
-ambiguousUsage ::
-  forall scope.
-  SingI scope =>
-  Pos ->
-  NameKind ->
-  NameW scope ->
-  [AmbiguousOrigin] ->
-  Diagnostic
-ambiguousUsage loc k name amb =
-  PosError loc $ List.intercalate [ErrLine] $ intro : fmap choice (sortPos amb)
+ambiguousUsage :: SrcRange -> NameKind -> NameW scope -> [AmbiguousOrigin] -> D.Diagnostic
+ambiguousUsage loc _k _name amb =
+  D.err loc "ambigous name" "this usage is ambigous"
+    & appEndo (foldMap (coerce choice) amb)
   where
-    intro =
-      [ Error "Usage of",
-        Error $ nameKind k name,
-        Error name,
-        Error "is ambiguous. It may refer to"
-      ]
-    choice a =
-      [ Error "  •",
-        Error (description a),
-        ErrLine,
-        Error "   ",
-        Error (location a)
-      ]
+    choice :: AmbiguousOrigin -> D.Diagnostic -> D.Diagnostic
+    choice a = D.context (getRange a) (description a)
     description = \case
-      AmbiguousImport {} -> "the import from"
-      AmbiguousDefine {} -> "the local definition"
-    location amb =
-      MsgTag $ "at " ++ show (pos amb)
+      AmbiguousImport _ (ModuleName m) -> "it may refer to the import from " ++ m
+      AmbiguousDefine {} -> "it may refer to this local definition"
 {-# NOINLINE ambiguousUsage #-}
 
-unknownImportItem :: Pos -> ModuleName -> Scope -> Located Unqualified -> Diagnostic
-unknownImportItem stmtLoc modName scope (itemLoc :@ item) =
-  PosError itemLoc $
-    scopePrefix
-      [ Error item,
-        Error "is not exported by module",
-        Error modName,
-        ErrLine,
-        Error "In import statement at",
-        Error stmtLoc
-      ]
+unknownImportItem :: SrcRange -> ModuleName -> Scope -> Located Unqualified -> D.Diagnostic
+unknownImportItem stmtLoc modName scope (itemLoc :@ _item) =
+  D.err itemLoc "unknown import item" msg
+    & D.context stmtLoc "in import statement"
   where
-    scopePrefix = case scope of
-      Types -> (Error "Type" :)
-      Values -> id
+    msg = "this " ++ scopeMsg ++ " is not exported from " ++ unModuleName modName
+    scopeMsg = case scope of
+      Types -> "type"
+      Values -> "name"
 {-# NOINLINE unknownImportItem #-}
 
 unboundName ::
-  forall stage scope. SingI scope => Pos -> NameKind -> Name stage scope -> Diagnostic
+  forall stage scope. SingI scope => SrcRange -> NameKind -> Name stage scope -> D.Diagnostic
 unboundName loc kind v =
-  PosError loc [Error "Unbound", Error $ nameKind kind v, Error v]
+  D.err
+    loc
+    ("unbound " ++ nameKind kind v)
+    "this name is neither defined anywhere in scope nor imported"
 {-# NOINLINE unboundName #-}

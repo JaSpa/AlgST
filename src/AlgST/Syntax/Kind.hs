@@ -19,8 +19,8 @@ module AlgST.Syntax.Kind
 where
 
 import AlgST.Syntax.Name
-import AlgST.Syntax.Pos
 import AlgST.Util.PartialOrd
+import AlgST.Util.SourceLocation
 import Control.Applicative
 import Language.Haskell.TH.Syntax (Lift)
 import Text.Read
@@ -101,8 +101,8 @@ leastUpperBound (Kind b m) (Kind b' m') = Kind (max b b') (max m m')
 
 -- | > Bind _ v k a               ~ ∀(v:k). a
 --   >                            ~ \[v:k] -> a
-data Bind stage a = Bind Pos !(TypeVar stage) !Kind a
+data Bind stage a = Bind !SrcRange !(TypeVar stage) !Kind a
   deriving (Lift)
 
-instance HasPos (Bind x a) where
-  pos (Bind p _ _ _) = p
+instance HasRange (Bind x a) where
+  getRange (Bind r _ _ _) = r

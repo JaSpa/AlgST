@@ -19,6 +19,7 @@ import AlgST.Syntax.Name
 import AlgST.Syntax.Phases hiding (Located)
 import AlgST.Syntax.Type qualified as T
 import AlgST.Util.SourceLocation as R
+import Data.Bitraversable
 import Data.Functor.Identity
 import Data.Kind qualified as Hs
 import Data.Map.Strict qualified as Map
@@ -65,9 +66,12 @@ data TypeNominal stage c = TypeNominal
   }
   deriving (Lift)
 
-type Params stage = [(Located (Name stage Types), K.Kind)]
-
 type XParams x = Params (XStage x)
+
+type Params stage = [Located (Name stage Types, K.Kind)]
+
+traverseParams :: Applicative f => (Name stage Types -> f a) -> Params stage -> f [Located (a, K.Kind)]
+traverseParams f = traverse (traverse (bitraverse f pure))
 
 type Constructors stage a = NameMapG stage Values (SrcRange, [a])
 

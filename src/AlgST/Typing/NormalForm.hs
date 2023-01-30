@@ -7,10 +7,10 @@ module AlgST.Typing.NormalForm (nf) where
 
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Name
-import AlgST.Syntax.Pos
 import AlgST.Syntax.Traversal
 import AlgST.Syntax.Type
 import AlgST.Typing.Phase
+import AlgST.Util.SourceLocation
 import Control.Category ((<<<), (>>>))
 import Data.Functor.Compose
 import Data.Set qualified as Set
@@ -46,7 +46,7 @@ nfs = go
       App x _ _ ->
         absurd x
       Var k v ->
-        (Just (Var k v), Just $ Dualof (pos k) (Var k v))
+        (Just (Var k v), Just $ Dualof (getRange k) (Var k v))
       Pair k t u ->
         let (t', _) = go t
             (u', _) = go u

@@ -19,13 +19,12 @@ module AlgST.Rename.Fresh
   )
 where
 
-import AlgST.Syntax.Decl (Params)
+import AlgST.Syntax.Decl qualified as D
 import AlgST.Syntax.Name
 import Control.Monad.Eta
 import Control.Monad.Fix
 import Control.Monad.Reader
 import Control.Monad.State.Strict
-import Data.Bitraversable
 import Data.Functor.Identity
 
 newtype FreshT m a = Fresh {unFresh :: ReaderT ModuleName (StateT ResolvedId m) a}
@@ -61,8 +60,8 @@ freshResolved n = do
 freshResolvedU :: Monad m => Unqualified -> FreshT m (NameR scope)
 freshResolvedU = freshResolved . Name emptyModuleName
 
-freshResolvedParams :: Monad m => Params stage -> FreshT m (Params Resolved)
-freshResolvedParams = traverse (bitraverse (traverse freshResolved) pure)
+freshResolvedParams :: Monad m => D.Params stage -> FreshT m (D.Params Resolved)
+freshResolvedParams = D.traverseParams freshResolved
 
 etaFreshT :: FreshT m a -> FreshT m a
 etaFreshT = Fresh . etaReaderT . mapReaderT etaStateT . unFresh

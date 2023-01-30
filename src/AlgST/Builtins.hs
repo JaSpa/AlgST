@@ -125,4 +125,4 @@ builtinsImport =
 
 builtinsEnv :: RenameEnv
 builtinsEnv =
-  Rn.importAllEnv ZeroPos BuiltinsModule builtinsModuleMap emptyModuleName
+  Rn.importAllEnv NullRange BuiltinsModule builtinsModuleMap emptyModuleName
