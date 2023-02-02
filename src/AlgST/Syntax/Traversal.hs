@@ -1,7 +1,6 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -53,7 +52,6 @@ module AlgST.Syntax.Traversal
     termSubstitions,
 
     -- * Traversal helpers
-    Two (..),
     Pxy,
     mkPxy,
   )
@@ -71,6 +69,7 @@ import Control.Category ((>>>))
 import Control.Monad.Eta
 import Control.Monad.Trans.Reader
 import Data.Bitraversable
+import Data.Foldable
 import Data.Functor.Classes
 import Data.Functor.Compose
 import Data.Functor.Identity
@@ -320,21 +319,6 @@ substituteTerm ::
   NameMapG (XStage x) Values (E.Exp x) ->
   (a -> a)
 substituteTerm = applySubstitutions . termSubstitions
-
-newtype Two a = Two {getTwo :: (a, a)}
-  deriving stock (Functor, Foldable, Traversable)
-
-instance Applicative Two where
-  pure a = Two (a, a)
-  Two (fa, fb) <*> Two (a, b) = Two (fa a, fb b)
-
-instance Show1 Two where
-  liftShowsPrec f g p (Two xy) =
-    showParen (p > 10) $
-      liftShowsPrec2 f g f g 11 xy
-
-instance (Show a) => Show (Two a) where
-  showsPrec = showsPrec1
 
 class SynTraversable x y a b where
   traverseSyntax :: (SynTraversal f x y) => Pxy x y -> a -> f b

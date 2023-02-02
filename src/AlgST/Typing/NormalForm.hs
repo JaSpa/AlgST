@@ -1,5 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -7,28 +9,30 @@ module AlgST.Typing.NormalForm (nf) where
 
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Name
-import AlgST.Syntax.Traversal
+import AlgST.Syntax.Traversal (anyFree)
 import AlgST.Syntax.Type
 import AlgST.Typing.Phase
+import AlgST.Util.OncePair
 import AlgST.Util.SourceLocation
 import Control.Category ((<<<), (>>>))
+import Data.Bifunctor.Join
 import Data.Functor.Compose
 import Data.Set qualified as Set
-import Data.Tuple
 import Data.Void
+import GHC.Exts (oneShot)
 
 -- | Calcuates the positive normal form.
 nf :: TcType -> Maybe TcType
-nf = fst . nfs
+nf = onceFst . nfs
 
 -- | @nfs a@ calculates @(nf⁺(a), nf⁻(a))@.
-nfs :: TcType -> (Maybe TcType, Maybe TcType)
+nfs :: TcType -> OncePair (Maybe TcType) (Maybe TcType)
 nfs = go
   where
-    wrap = Compose <<< Two
-    unwrap = getCompose >>> getTwo
+    wrap = Compose <<< Join
+    unwrap = getCompose >>> runJoin
 
-    negate :: XNegate Tc -> TcType -> (Maybe TcType, Maybe TcType)
+    negate :: XNegate Tc -> TcType -> OncePair (Maybe TcType) (Maybe TcType)
     negate _ (Negate _ (Negate x t)) = negate x t
     negate _ (Negate _ t) = go t
     negate x t = unwrap $ Negate x <$> wrap (go t)
@@ -37,51 +41,53 @@ nfs = go
     polarized !p (Negate _ t) = polarized (flipPolarity p) t
     polarized !p t = (p, t)
 
-    go :: TcType -> (Maybe TcType, Maybe TcType)
-    go = \case
+    go :: TcType -> OncePair (Maybe TcType) (Maybe TcType)
+    go = oneShot \case
       Unit k ->
-        (Just (Unit k), Nothing)
+        Just (Unit k) :|: Nothing
       Con x _ _ ->
         absurd x
       App x _ _ ->
         absurd x
       Var k v ->
-        (Just (Var k v), Just $ Dualof (getRange k) (Var k v))
+        Just (Var k v) :|: Just (Dualof (getRange k) (Var k v))
       Pair k t u ->
-        let (t', _) = go t
-            (u', _) = go u
-         in (Pair k <$> t' <*> u', Nothing)
+        let t' :|: _ = go t
+            u' :|: _ = go u
+         in Pair k <$> t' <*> u' :|: Nothing
       Arrow k m a b ->
-        let (a', _) = go a
-            (b', _) = go b
-         in (Arrow k m <$> a' <*> b', Nothing)
+        let a' :|: _ = go a
+            b' :|: _ = go b
+         in Arrow k m <$> a' <*> b' :|: Nothing
       End x p ->
-        (Just (End x p), Just (End x (flipPolarity p)))
-      Session k p a b ->
-        let !(a', _) = go a
-            !(b1, b2) = go b
+        Just (End x p) :|: Just (End x (flipPolarity p))
+      Session k p a b -> do
+        let a' :|: _ = go a
+            b1 :|: b2 = go b
             pa1 = polarized p <$> a'
             pa2 = polarized (flipPolarity p) <$> a'
-         in (uncurry (Session k) <$> pa1 <*> b1, uncurry (Session k) <$> pa2 <*> b2)
+        let x = uncurry (Session k) <$> pa1 <*> b1
+        let y = uncurry (Session k) <$> pa2 <*> b2
+        x :|: y
       Dualof _ t' ->
-        swap $ go t'
+        onceSwap $ go t'
       Negate x t ->
         negate x t
       Forall tyK (K.Bind p' v k t)
         | (prepend', vs, Arrow arrK m t u) <- collectForalls t,
-          not (liftNameSet (Set.insert v vs) `anyFree` t) ->
-            let (t1, _) = go t
-                (u1, _) = go (prepend (prepend' u))
-             in (Arrow arrK m <$> t1 <*> u1, Nothing)
+          not (liftNameSet (Set.insert v vs) `anyFree` t) -> do
+            let t1 :|: _ = go t
+                u1 :|: _ = go (prepend (prepend' u))
+            Arrow arrK m <$> t1 <*> u1 :|: Nothing
         | otherwise ->
             unwrap $ prepend <$> wrap (go t)
         where
           prepend :: TcType -> TcType
           prepend = Forall tyK . K.Bind p' v k
-      Type ref ->
-        let args = traverse (fst . go) (typeRefArgs ref)
+      Type ref -> do
+        let args = traverse (onceFst . go) (typeRefArgs ref)
             setArgs as = ref {typeRefArgs = as}
-         in (Type . setArgs <$> args, Nothing)
+        Type . setArgs <$> args :|: Nothing
 
 {-
 Potential for optimization

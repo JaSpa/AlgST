@@ -19,6 +19,7 @@ dependencies:
 - ansi-terminal
 - array
 - async
+- bifunctors
 - bytestring
 - call-stack
 - containers
