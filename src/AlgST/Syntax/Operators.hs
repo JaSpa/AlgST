@@ -92,33 +92,33 @@ instance StoresRange (OperatorSequence h x o) where
     OpSeqE _ a b -> \r -> OpSeqE r a b
     OpSeqO _ a b -> \r -> OpSeqO r a b
 
-opsSimpleSeq :: E.Exp x -> o -> E.Exp x -> OperatorSequence HeadE x o
+opsSimpleSeq :: (HasRange o, E.ForallX HasRange x) => E.Exp x -> o -> E.Exp x -> OperatorSequence HeadE x o
 opsSimpleSeq lhs op rhs =
   OpSeqE
-    (needRange lhs `runion` needRange op `runion` needRange rhs)
+    (lhs `runion` op `runion` rhs)
     lhs
     (This (NE.singleton (op, rhs)))
 
-opsLeftSection :: o -> E.Exp x -> OperatorSequence HeadO x o
+opsLeftSection :: (HasRange o, E.ForallX HasRange x) => o -> E.Exp x -> OperatorSequence HeadO x o
 opsLeftSection o rhs =
-  OpSeqO (needRange o `runion` needRange rhs) (NE.singleton (o, rhs)) Nothing
+  OpSeqO (o `runion` rhs) (NE.singleton (o, rhs)) Nothing
 
-opsRightSection :: E.Exp x -> o -> OperatorSequence HeadE x o
+opsRightSection :: (HasRange o, E.ForallX HasRange x) => E.Exp x -> o -> OperatorSequence HeadE x o
 opsRightSection lhs o =
-  OpSeqE (needRange lhs `runion` needRange o) lhs (That o)
+  OpSeqE (lhs `runion` o) lhs (That o)
 
 infixr 9 `consOperator`, `consOperand`
 
-consOperator :: o -> OperatorSequence HeadE x o -> OperatorSequence HeadO x o
-consOperator o (OpSeqE r e tail) = OpSeqO (needRange r `runion` needRange o) pairs (justThere tail)
+consOperator :: HasRange o => o -> OperatorSequence HeadE x o -> OperatorSequence HeadO x o
+consOperator o (OpSeqE r e tail) = OpSeqO (r `runion` o) pairs (justThere tail)
   where
     pairs = case justHere tail of
       Just ps -> (o, e) <| ps
       Nothing -> NE.singleton (o, e)
 
-consOperand :: E.Exp x -> OperatorSequence HeadO x o -> OperatorSequence HeadE x o
+consOperand :: E.ForallX HasRange x => E.Exp x -> OperatorSequence HeadO x o -> OperatorSequence HeadE x o
 consOperand e (OpSeqO r pairs mo) =
-  OpSeqE (needRange r `runion` needRange e) e (maybe (This pairs) (These pairs) mo)
+  OpSeqE (r `runion` e) e (maybe (This pairs) (These pairs) mo)
 
 foldOperatorSequence :: (Semigroup s) => (o -> s) -> (E.Exp x -> s) -> OperatorSequence h x o -> s
 foldOperatorSequence fO fE (OpSeqE _ e tail) =

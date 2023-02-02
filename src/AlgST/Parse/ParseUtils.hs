@@ -174,7 +174,7 @@ data Parenthesized
 
 sectionsParenthesized :: (SingI h) => Parenthesized -> OperatorSequence h Parse PExp -> Parser PExp
 sectionsParenthesized TopLevel ops = do
-  traverse_ (addError . errorMissingOperand (Just (needRange ops))) (sectionOperator ops)
+  traverse_ (addError . errorMissingOperand (Just (getRange ops))) (sectionOperator ops)
   pure $ E.Exp $ Right $ SomeOperatorSequence ops
 sectionsParenthesized (InParens r) ops = do
   -- If we have a section we want to extend the sequence's range to include the
@@ -182,9 +182,9 @@ sectionsParenthesized (InParens r) ops = do
   let extendRange = if isSection ops then id else rangeL %~ (<> r)
   pure $ E.Exp $ Right $ SomeOperatorSequence $ extendRange ops
 
-errorMissingOperand :: Maybe SrcRange -> o -> D.Diagnostic
+errorMissingOperand :: HasRange o => Maybe SrcRange -> o -> D.Diagnostic
 errorMissingOperand sectionRange op =
-  D.err (needRange op) "missing operand" "this operator is missing an operand"
+  D.err (getRange op) "missing operand" "this operator is missing an operand"
     & maybe id sectionFix sectionRange
   where
     sectionFix r = D.fix r "wrap it in parentheses for an operator section"
@@ -492,7 +492,7 @@ instance DuplicateError (Name PStage Values) (SrcRange, [PType]) where
 --
 -- > case … of { A -> …, A -> … }
 instance DuplicateError (Name PStage Values) (E.CaseBranch f Parse) where
-  duplicateError _ x y = errorDuplicateBranch (needRange x) (needRange y)
+  duplicateError _ x y = errorDuplicateBranch (getRange x) (getRange y)
 
 -- | Messages for any form of duplicate binding:
 --
@@ -566,7 +566,7 @@ errorRecNoTermLambda fullExpr recToken recExpr =
 
 errorMultipleWildcards ::
   E.CaseBranch Identity Parse -> E.CaseBranch Identity Parse -> D.Diagnostic
-errorMultipleWildcards (needRange -> x) (needRange -> y) =
+errorMultipleWildcards (getRange -> x) (getRange -> y) =
   D.err
     (min x y)
     "multiple wildcard branches in case expression"
