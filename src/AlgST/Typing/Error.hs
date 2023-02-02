@@ -8,7 +8,6 @@
 
 module AlgST.Typing.Error where
 
-import AlgST.Parse.Unparser
 import AlgST.Rename
 import AlgST.Syntax.Decl
 import AlgST.Syntax.Expression qualified as E
@@ -69,7 +68,7 @@ unexpectedKind t kind hintKinds = PosError (needPos t) (message ++ hint)
 
 unexpectedForkKind :: String -> RnExp -> TcType -> K.Kind -> K.Kind -> Diagnostic
 unexpectedForkKind forkKind e ty kiActual kiExpected =
-  PosError (pos e) $
+  PosError (needPos e) $
     errUnline
       [ [Error $ "Forked expression (" ++ forkKind ++ ")"],
         [indent, Error e],
@@ -85,7 +84,7 @@ unexpectedForkKind forkKind e ty kiActual kiExpected =
 
 typeMismatch :: RnExp -> TcType -> TcType -> TcType -> TcType -> Diagnostic
 typeMismatch expr tyActual tyActualNF tyExpected tyExpectedNF =
-  PosError (pos expr) $
+  PosError (needPos expr) $
     errUnline
       [ [Error "Expression"],
         [indent, Error expr],
@@ -116,7 +115,7 @@ noNormalform t = PosError (needPos t) [Error "Malformed type:", Error t]
 
 missingUse :: ProgVar TcStage -> Var -> Diagnostic
 missingUse name var =
-  PosError (pos var) . errUnline $
+  PosError (needPos var) . errUnline $
     [ [Error "Linear variable", Error name, Error "of type"],
       showType (varType var) Nothing,
       [Error "is unused."]
@@ -162,7 +161,7 @@ linVarUsedTwice loc1 loc2 name var =
 noArrowType :: RnExp -> TcType -> Diagnostic
 noArrowType e t =
   PosError
-    (pos e)
+    (needPos e)
     [ Error "Type of",
       ErrLine,
       Error "  ",
@@ -178,7 +177,7 @@ noArrowType e t =
 noForallType :: RnExp -> TcType -> Diagnostic
 noForallType e t =
   PosError
-    (pos e)
+    (needPos e)
     [ Error "Type of",
       ErrLine,
       Error "  ",
@@ -274,7 +273,7 @@ invalidPatternExpr desc loc scrutTy tyNF =
 {-# NOINLINE invalidPatternExpr #-}
 
 invalidSessionCaseBranch :: E.CaseBranch f Rn -> Diagnostic
-invalidSessionCaseBranch branch = PosError (E.branchPos branch) [Error msg]
+invalidSessionCaseBranch branch = PosError (needPos branch) [Error msg]
   where
     msg = "Branches of a receiving case must bind exactly one variable."
 {-# NOINLINE invalidSessionCaseBranch #-}
@@ -377,13 +376,13 @@ branchedConsumeDifference name var consumeBranch consumeLoc otherBranch =
         ],
         displayBranchError otherBranch,
         [ Error "at",
-          Error (pos otherBranch),
+          Error (needPos otherBranch),
           ErrLine,
           Error "but is consumed in"
         ],
         displayBranchError consumeBranch,
         [ Error "at",
-          Error (pos consumeBranch)
+          Error (needPos consumeBranch)
         ]
       ]
 {-# NOINLINE branchedConsumeDifference #-}
@@ -441,7 +440,7 @@ protocolConAsValue loc con parent =
 builtinMissingApp :: RnExp -> String -> Diagnostic
 builtinMissingApp e expected =
   PosError
-    (pos e)
+    (needPos e)
     [ Error "Builtin",
       Error e,
       Error "must be followed by",

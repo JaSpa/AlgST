@@ -33,7 +33,7 @@ where
 import AlgST.Syntax.Decl qualified as D
 import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Name
-import AlgST.Syntax.Phases hiding (Located)
+import AlgST.Syntax.Phases
 import AlgST.Syntax.Type qualified as T
 import AlgST.Util.SourceLocation
 import Data.HashMap.Strict (HashMap)

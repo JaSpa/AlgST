@@ -19,7 +19,6 @@ import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
-import AlgST.Syntax.Pos qualified as P
 import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.SourceLocation
 import Control.Monad
@@ -48,7 +47,7 @@ data ResolvedOp = ResolvedOp
   }
 
 instance HasRange ResolvedOp where
-  getRange = needRange . opExpr
+  getRange = getRange . opExpr
 
 type Unresolved = RnExp
 
@@ -84,7 +83,7 @@ resolveOperator op = do
   where
     unknownOpErr =
       D.err
-        (needRange op)
+        (getRange op)
         "unknown operator"
         "operator has no associativity/precedence information"
 
@@ -179,29 +178,29 @@ buildOpApplication op lhs mrhs
     opName op == B.opPipeBwd && noTypeArgs op,
     Just rhs <- mrhs =
       -- Desugar operator to direct function application.
-      pure $ E.App (needPos op) lhs rhs
+      pure $ E.App (getRange op) lhs rhs
   | -- (|>)
     opName op == B.opPipeFwd && noTypeArgs op,
     Just rhs <- mrhs =
       -- Desugar operator to (flipped) direct function application.
-      pure $ E.App (needPos op) rhs lhs
+      pure $ E.App (getRange op) rhs lhs
   | -- (<&>)
     opName op == B.opMapAfter && noTypeArgs op,
     Just rhs <- mrhs = lift . lift $ do
       -- Desugar to
       --    let (a, c) = lhs in (rhs a, c)
-      let loc = needPos op
+      let loc = getRange op
       a <- freshResolvedU $ Unqualified "a"
       c <- freshResolvedU $ Unqualified "c"
       pure
-        . E.PatLet loc (needPos op P.@- B.conPair) [needPos op P.@- a, needPos op P.@- c] lhs
+        . E.PatLet loc (op @- B.conPair) [op @- a, op @- c] lhs
         $ E.Pair loc (E.App loc rhs (E.Var loc a)) (E.Var loc c)
   | -- (<*>)
     opName op == B.opAppComb && noTypeArgs op,
     Just rhs <- mrhs = lift . lift $ do
       -- Desugar to:
       -- \c1 -> let (f, c2) = lhs c1 in let (x, c3) = rhs c2 in (f x, c3)
-      let po = needPos op
+      let po = getRange op
       c1 <- freshResolvedU $ Unqualified "c1"
       c2 <- freshResolvedU $ Unqualified "c2"
       c3 <- freshResolvedU $ Unqualified "c3"
@@ -210,12 +209,12 @@ buildOpApplication op lhs mrhs
       pure
         . E.Abs po
         . E.Bind po K.Lin c1 Nothing
-        . E.PatLet po (needPos op P.@- B.conPair) [needPos op P.@- f, needPos op P.@- c2] (E.App po lhs (E.Var po c1))
-        . E.PatLet po (needPos op P.@- B.conPair) [needPos op P.@- x, needPos op P.@- c3] (E.App po rhs (E.Var po c2))
+        . E.PatLet po (op @- B.conPair) [op @- f, op @- c2] (E.App po lhs (E.Var po c1))
+        . E.PatLet po (op @- B.conPair) [op @- x, op @- c3] (E.App po rhs (E.Var po c2))
         $ E.Pair po (E.App po (E.Var po f) (E.Var po x)) (E.Var po c3)
   | otherwise = do
-      let appLhs = E.App (needPos lhs) (opExpr op) lhs
-      pure $ maybe appLhs (E.App <$> needPos <*> pure appLhs <*> id) mrhs
+      let appLhs = E.App (getRange lhs) (opExpr op) lhs
+      pure $ maybe appLhs (E.App <$> getRange <*> pure appLhs <*> id) mrhs
 
 type Side = forall a. a -> Either a a
 

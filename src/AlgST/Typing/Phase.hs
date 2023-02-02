@@ -14,7 +14,7 @@ import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Module (Module)
 import AlgST.Syntax.Name
-import AlgST.Syntax.Phases hiding (Located, unL)
+import AlgST.Syntax.Phases
 import AlgST.Syntax.Traversal
 import AlgST.Syntax.Tree
 import AlgST.Syntax.Type qualified as T
@@ -53,16 +53,16 @@ instance LabeledTree TcExpX where
           "TcExpX.ValueCase"
           [labeledTree exp, fieldMapTree map]
 
-instance HasPos TcExpX where
-  pos = \case
-    ValueCase p _ _ -> p
-    RecvCase p _ _ -> p
+instance HasRange TcExpX where
+  getRange = \case
+    ValueCase r _ _ -> r
+    RecvCase r _ _ -> r
 
 data TcExpX
   = -- | > ValueCase _ e cases        ~ case e of { cases... }
-    ValueCase !Pos !TcExp !(TcCaseMap [] Maybe)
+    ValueCase !SrcRange !TcExp !(TcCaseMap [] Maybe)
   | -- | > RecvCase _ e cases         ~ case e of { cases... }
-    RecvCase !Pos !TcExp !(TcCaseMap Identity (Const ()))
+    RecvCase !SrcRange !TcExp !(TcCaseMap Identity (Const ()))
   deriving stock (Lift)
 
 instance Unparse TcExpX where
@@ -75,7 +75,7 @@ instance Unparse TcExpX where
 data TypeRef = TypeRef
   { typeRefName :: !(TypeVar TcStage),
     -- | Constructor names excluded from this type.
-    typeRefExcl :: !(TcNameMap Values Pos),
+    typeRefExcl :: !(TcNameMap Values SrcRange),
     typeRefArgs :: [TcType],
     typeRefKind :: !K.Kind,
     typeRefNameRange :: !SrcRange
@@ -160,25 +160,25 @@ type TcNameMap scope       = NameMapG TcStage scope
 type TcNameSet scope       = NameSetG TcStage scope
 type instance XStage    Tc = TcStage
 
-type instance E.XLit    Tc = Pos
-type instance E.XVar    Tc = Pos
-type instance E.XCon    Tc = Pos
-type instance E.XAbs    Tc = Pos
-type instance E.XApp    Tc = Pos
-type instance E.XPair   Tc = Pos
+type instance E.XLit    Tc = SrcRange
+type instance E.XVar    Tc = SrcRange
+type instance E.XCon    Tc = SrcRange
+type instance E.XAbs    Tc = SrcRange
+type instance E.XApp    Tc = SrcRange
+type instance E.XPair   Tc = SrcRange
 type instance E.XCond   Tc = Void     -- Desugared to @'E.Exp' ('ValueCase' _ _)@.
 type instance E.XCase   Tc = Void     -- E.Exp ValueCase / E.Exp RecvCase
-type instance E.XTAbs   Tc = Pos
-type instance E.XTApp   Tc = Pos
+type instance E.XTAbs   Tc = SrcRange
+type instance E.XTApp   Tc = SrcRange
 type instance E.XUnLet  Tc = Void     -- Desugared to 'Case'.
 type instance E.XPatLet Tc = Void     -- Desugared to 'Case'.
-type instance E.XRec    Tc = Pos
-type instance E.XNew    Tc = Pos
-type instance E.XSelect Tc = Pos
-type instance E.XFork   Tc = Pos      -- TODO: Could be desugared to 'New' + 'Fork_' + ...
-type instance E.XFork_  Tc = Pos
+type instance E.XRec    Tc = SrcRange
+type instance E.XNew    Tc = SrcRange
+type instance E.XSelect Tc = SrcRange
+type instance E.XFork   Tc = SrcRange      -- TODO: Could be desugared to 'New' + 'Fork_' + ...
+type instance E.XFork_  Tc = SrcRange
 type instance E.XExp    Tc = TcExpX
-type instance E.XBind   Tc = Pos
+type instance E.XBind   Tc = SrcRange
 
 type instance T.XUnit    Tc = SrcRange
 type instance T.XArrow   Tc = SrcRange

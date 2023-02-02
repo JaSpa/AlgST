@@ -548,10 +548,11 @@ errorNoTermLinLambda absRange arrRange =
     & D.hint "Use an unrestricted arrow for this case."
 {-# NOINLINE errorNoTermLinLambda #-}
 
-errorRecNoTermLambda :: SrcRange -> SrcRange -> D.Diagnostic
-errorRecNoTermLambda recLoc recExpr =
-  D.err recExpr "invalid ‘rec’ expression" "invalid ‘rec’ right-hand side expression"
-    & D.context recLoc "‘rec’ expression started here"
+errorRecNoTermLambda :: SrcRange -> SrcRange -> SrcRange -> D.Diagnostic
+errorRecNoTermLambda fullExpr recToken recExpr =
+  D.err fullExpr "" "invalid ‘rec’ expression"
+    & D.context recToken "‘rec’ expression started here"
+    & D.context recExpr "invalid ‘rec’ right-hand side expression"
     & D.note note1
     & D.note note2
   where
@@ -615,12 +616,10 @@ skippingNLs :: Parser a -> Parser a
 skippingNLs (Parser m) = Parser do
   local (_1 .~ NLSkipAll) m
 
-errorUnknownPragma :: Token -> Token -> SrcRange -> D.Diagnostic
-errorUnknownPragma pragmaStart pragmaEnd keywordRange =
+errorUnknownPragma :: SrcRange -> SrcRange -> D.Diagnostic
+errorUnknownPragma pragmaRange keywordRange =
   D.err pragmaRange "invalid pragma" "unknown pragma directive"
     & D.fix keywordRange "try ‘BENCHMARK’ or ‘BENCHMARK!’"
-  where
-    pragmaRange = SrcRange (getStartLoc pragmaStart) (getEndLoc pragmaEnd)
 
 scanToken :: (Token -> Parser a) -> Parser a
 scanToken k = Parser ask >>= \(nlp, lf) -> runLexFn (lf nlp) k

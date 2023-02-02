@@ -20,22 +20,22 @@ import AlgST.Syntax.Phases
 import AlgST.Syntax.Traversal
 import AlgST.Syntax.Tree
 import AlgST.Syntax.Type qualified as T
-import AlgST.Util.SourceLocation (SrcRange)
+import AlgST.Util.SourceLocation
 import Data.Void
 import Language.Haskell.TH.Syntax (Lift)
 
 data Parse
 
 data ParsedBuiltin
-  = BuiltinNew Pos
-  | BuiltinFork Pos
-  | BuiltinFork_ Pos
+  = BuiltinNew SrcRange
+  | BuiltinFork SrcRange
+  | BuiltinFork_ SrcRange
   deriving stock (Lift)
 
-instance HasPos ParsedBuiltin where
-  pos (BuiltinNew p) = p
-  pos (BuiltinFork p) = p
-  pos (BuiltinFork_ p) = p
+instance HasRange ParsedBuiltin where
+  getRange (BuiltinNew p) = p
+  getRange (BuiltinFork p) = p
+  getRange (BuiltinFork_ p) = p
 
 instance Unparse ParsedBuiltin where
   unparse =
@@ -64,26 +64,26 @@ type PName                    = XName Parse
 type PStage                   = Written
 type instance XStage    Parse = PStage
 
-type instance E.XLit    Parse = Pos
-type instance E.XVar    Parse = Pos
-type instance E.XCon    Parse = Pos
-type instance E.XAbs    Parse = Pos
-type instance E.XApp    Parse = Pos
-type instance E.XPair   Parse = Pos
-type instance E.XCond   Parse = Pos
-type instance E.XCase   Parse = Pos
-type instance E.XTAbs   Parse = Pos
-type instance E.XTApp   Parse = Pos
-type instance E.XUnLet  Parse = Pos
-type instance E.XPatLet Parse = Pos
-type instance E.XRec    Parse = Pos
+type instance E.XLit    Parse = SrcRange
+type instance E.XVar    Parse = SrcRange
+type instance E.XCon    Parse = SrcRange
+type instance E.XAbs    Parse = SrcRange
+type instance E.XApp    Parse = SrcRange
+type instance E.XPair   Parse = SrcRange
+type instance E.XCond   Parse = SrcRange
+type instance E.XCase   Parse = SrcRange
+type instance E.XTAbs   Parse = SrcRange
+type instance E.XTApp   Parse = SrcRange
+type instance E.XUnLet  Parse = SrcRange
+type instance E.XPatLet Parse = SrcRange
+type instance E.XRec    Parse = SrcRange
 type instance E.XNew    Parse = Void  -- BuiltinNew
-type instance E.XSelect Parse = Pos
+type instance E.XSelect Parse = SrcRange
 type instance E.XFork   Parse = Void  -- BuiltinFork
 type instance E.XFork_  Parse = Void  -- BuiltinFork_
 type instance E.XExp    Parse = Either ParsedBuiltin (SomeOperatorSequence Parse PExp)
 
-type instance E.XBind Parse = Pos
+type instance E.XBind Parse = SrcRange
 
 type instance T.XUnit    Parse = SrcRange
 type instance T.XArrow   Parse = SrcRange

@@ -63,7 +63,7 @@ import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
 import AlgST.Syntax.Phases
 import AlgST.Syntax.Type qualified as T
-import AlgST.Util.SourceLocation (HasRange, SrcRange, needPos)
+import AlgST.Util.SourceLocation
 import Control.Applicative
 import Control.Category ((>>>))
 import Control.Monad.Eta
@@ -98,7 +98,7 @@ class (Applicative f) => SynTraversal f x y where
   useConstructor ::
     (SingI scope) =>
     Pxy x y ->
-    Pos ->
+    SrcRange ->
     XName x scope ->
     f (XName y scope)
 
@@ -229,7 +229,7 @@ data Substitutions x = Substitutions
   }
 
 instance
-  ( HasPos (E.XCon x),
+  ( HasRange (E.XCon x),
     HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y,
@@ -338,9 +338,6 @@ traverseSyntaxBetween (_ :: p1 x) (_ :: p2 y) = traverseSyntax (mkPxy () @x @y)
 instance SynTraversable x y Void a where
   traverseSyntax _ = absurd
 
-instance SynTraversable x y Pos Pos where
-  traverseSyntax _ = pure
-
 instance SynTraversable x y SrcRange SrcRange where
   traverseSyntax _ = pure
 
@@ -351,7 +348,7 @@ instance
   traverseSyntax pxy = bitraverse (traverseSyntax pxy) (traverseSyntax pxy)
 
 instance
-  ( HasPos (E.XCon x),
+  ( HasRange (E.XCon x),
     HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y
@@ -368,7 +365,7 @@ instance
     E.Con x c ->
       E.Con
         <$> traverseSyntax pxy x
-        <*> useConstructor pxy (pos x) c
+        <*> useConstructor pxy (getRange x) c
     E.Abs x b ->
       E.Abs
         <$> traverseSyntax pxy x
@@ -448,7 +445,7 @@ instance
       exprExtension pxy x
 
 instance
-  ( HasPos (E.XCon x),
+  ( HasRange (E.XCon x),
     HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y
@@ -466,7 +463,7 @@ instance
         <*> traverseSyntax pxy b
 
 instance
-  ( HasPos (E.XCon x),
+  ( HasRange (E.XCon x),
     HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y,
@@ -481,7 +478,7 @@ instance
       <*> traverse (traverseSyntax pxy) (E.casesWildcard cm)
 
 instance
-  ( HasPos (E.XCon x),
+  ( HasRange (E.XCon x),
     HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y,
@@ -499,7 +496,7 @@ instance
           }
 
 instance
-  ( HasPos (E.XCon x),
+  ( HasRange (E.XCon x),
     HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y
@@ -515,7 +512,7 @@ instance
       <*> bindOne pxy v (\v' -> (v',) <$> traverseSyntax pxy e)
 
 instance
-  ( HasPos (E.XCon x),
+  ( HasRange (E.XCon x),
     HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y,
@@ -541,7 +538,7 @@ instance
         traverse (bitraverse (traverseSyntax p) (traverseSyntax p))
 
 instance
-  ( HasPos (E.XCon x),
+  ( HasRange (E.XCon x),
     HasRange (T.XCon x),
     E.PointwiseX (SynTraversable x y) x y,
     T.PointwiseX (SynTraversable x y) x y,
@@ -591,7 +588,7 @@ instance
     T.Con x v ps ->
       T.Con
         <$> traverseSyntax pxy x
-        <*> useConstructor pxy (needPos x) v
+        <*> useConstructor pxy (getRange x) v
         <*> traverse (traverseSyntax pxy) ps
     T.App x t u ->
       T.App
@@ -626,7 +623,7 @@ instance (XStage x ~ s, XStage y ~ t) => SynTraversable x y (T.ProtocolSubset s)
     pure T.ProtocolSubset {subsetComplement, subsetConstructors = cons}
 
 traverseNameMap ::
-  (SynTraversal f x y, SingI scope, HasPos a) =>
+  (SynTraversal f x y, SingI scope, HasRange a) =>
   Pxy x y ->
   (a -> f b) ->
   NameMapG (XStage x) scope a ->
@@ -635,7 +632,7 @@ traverseNameMap pxy f =
   -- We can't assume that 'useConstructor' is monotonic in respect to name
   -- ordering.
   Map.toAscList
-    >>> traverse (\(n, a) -> (,) <$> useConstructor pxy (pos a) n <*> f a)
+    >>> traverse (\(n, a) -> (,) <$> useConstructor pxy (getRange a) n <*> f a)
     >>> fmap Map.fromList
 
 traverseConstructor ::

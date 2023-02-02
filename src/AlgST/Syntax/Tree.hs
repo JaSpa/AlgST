@@ -137,7 +137,7 @@ instance (T.ForallX LabeledTree x, E.ForallX LabeledTree x) => LabeledTree (E.Ex
           ]
       E.PatLet x c vs e1 e2 ->
         tree
-          ("Exp.PatLet " ++ unwords (describeName . P.unL <$> c : vs))
+          ("Exp.PatLet " ++ unwords (describeName . unL <$> c : vs))
           [ labeledTree x,
             labeledTree e1,
             labeledTree e2
@@ -151,7 +151,7 @@ instance (T.ForallX LabeledTree x, E.ForallX LabeledTree x) => LabeledTree (E.Ex
           ]
       E.New x t ->
         tree "Exp.New" [labeledTree x, labeledTree t]
-      E.Select x (_ P.:@ c) ->
+      E.Select x (_ :@ c) ->
         tree ("Exp.Select " ++ describeName c) [labeledTree x]
       E.Fork x e ->
         tree "Exp.Fork" [labeledTree x, labeledTree e]
@@ -391,13 +391,13 @@ fieldMapTree m = conCases ++ wildCases
   where
     conCases =
       labeledMapTree
-        (\v b -> unwords [describeName x | _ P.:@ x <- P.ZeroPos P.:@ v : toList (E.branchBinds b)])
+        (\v b -> unwords [describeName x | _ :@ x <- NullRange :@ v : toList (E.branchBinds b)])
         (\_ b -> labeledTree $ E.branchExp b)
         (E.casesPatterns m)
     wildCases =
       [ Node (describeName x) (labeledTree e)
       | E.CaseBranch
-          { branchBinds = Identity (_ P.:@ x),
+          { branchBinds = Identity (_ :@ x),
             branchExp = e
           } <-
           toList (E.casesWildcard m)

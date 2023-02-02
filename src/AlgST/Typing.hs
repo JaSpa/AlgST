@@ -75,7 +75,8 @@ import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Module
 import AlgST.Syntax.Name
-import AlgST.Syntax.Pos
+import AlgST.Syntax.Pos (HasPos, Pos)
+import AlgST.Syntax.Pos qualified as Pos
 import AlgST.Syntax.Traversal
 import AlgST.Syntax.Type qualified as T
 import AlgST.Typing.Align
@@ -86,7 +87,7 @@ import AlgST.Typing.Phase
 import AlgST.Util
 import AlgST.Util.ErrorMessage hiding (Errors)
 import AlgST.Util.PartialOrd
-import AlgST.Util.SourceLocation qualified as R
+import AlgST.Util.SourceLocation
 import Control.Applicative
 import Control.Category ((>>>))
 import Control.Monad
@@ -216,14 +217,14 @@ checkWithModule ctxt prog k = do
       (tc1, k1) <- kisynth (benchT1 bench)
       (tc2, k2) <- kisynth (benchT2 bench)
       when (k1 /= k2) do
-        Error.add $ Error.benchKindMismatch (R.needPos tc1) k1 (R.needPos tc2) k2
+        Error.add $ Error.benchKindMismatch (needPos tc1) k1 (needPos tc2) k2
       -- We only check that the types are different for the "BENCHMARK!" case.
       -- If the user wants to ensure that the types are the same it is quite
       -- simple to write two functions witnessing the equality.
       when (not (benchExpect bench)) do
         n1 <- normalize tc1
         n2 <- normalize tc2
-        Error.adds [Error.benchTypesEqual (R.needPos tc1) | Alpha n1 == Alpha n2]
+        Error.adds [Error.benchTypesEqual (needPos tc1) | Alpha n1 == Alpha n2]
       pure bench {benchT1 = tc1, benchT2 = tc2}
 
 {- [Note: Empty KiTypingEnv]
@@ -269,15 +270,15 @@ checkTypeDecl name = \case
   DataDecl origin decl -> do
     -- New data declarations are allowed to be TL or TU.
     let allowed = K.TL :| [K.TU]
-    kind <- expectNominalKind (R.needPos origin) "data" name (nominalKind decl) allowed
+    kind <- expectNominalKind (needPos origin) "data" name (nominalKind decl) allowed
     tcConstructors <- local (bindParams (nominalParams decl)) do
       traverseConstructors (checkDataCon kind) (nominalConstructors decl)
-    pure $ Just $ DataDecl origin decl {nominalConstructors = first R.needRange <$> tcConstructors}
+    pure $ Just $ DataDecl origin decl {nominalConstructors = first needRange <$> tcConstructors}
   ProtoDecl origin decl -> do
-    _ <- expectNominalKind (R.needPos origin) "protocol" name (nominalKind decl) (K.P :| [])
+    _ <- expectNominalKind (needPos origin) "protocol" name (nominalKind decl) (K.P :| [])
     tcConstructors <- local (bindParams (nominalParams decl)) do
       traverseConstructors (const checkProtoCon) (nominalConstructors decl)
-    pure $ Just $ ProtoDecl origin decl {nominalConstructors = first R.needRange <$> tcConstructors}
+    pure $ Just $ ProtoDecl origin decl {nominalConstructors = first needRange <$> tcConstructors}
   where
     checkDataCon k _name field =
       kicheck field k
@@ -287,7 +288,7 @@ checkTypeDecl name = \case
 
 typeConstructorsFromDecls :: TypesMap Rn -> TcNameMap Types TypeCon
 typeConstructorsFromDecls = fmap \case
-  AliasDecl x ta -> LazyAlias (R.needPos x) ta
+  AliasDecl x ta -> LazyAlias (needPos x) ta
   DataDecl _ tn -> mkNominal tn
   ProtoDecl _ tn -> mkNominal tn
   where
@@ -311,7 +312,7 @@ applyTypeCon loc name con protoSub args = case con of
               typeRefName = name,
               typeRefExcl = mempty,
               typeRefArgs = snd <$> subs,
-              typeRefNameRange = R.needRange loc
+              typeRefNameRange = needRange loc
             }
     pure (T.Type typeRef, kind)
 
@@ -431,7 +432,7 @@ checkValueBodies embed = Map.traverseMaybeWithKey \_name -> \case
     pure $ Just $ Left condecl
   ValueGlobal (Just ValueDecl {..}) ty -> do
     -- Align the binds with the values type and check the body.
-    body <- embed $ checkAlignedBinds ty (R.needPLoc <$> valueParams) valueBody
+    body <- embed $ checkAlignedBinds ty valueParams valueBody
     pure $ Just $ Right ValueDecl {valueType = ty, valueBody = body, ..}
   ValueGlobal Nothing _ -> do
     -- Non-global values are not possible on this level.
@@ -453,11 +454,11 @@ checkAlignedBinds fullTy allVs e = go fullTy fullTy allVs
     go :: TcType -> TcType -> [Located (ANameG TcStage)] -> TypeM TcExp
     go _ t [] = tycheck e t
     go _ (T.Arrow k mul t u) (p :@ Right pv : vs) = do
-      withProgVarBind (unrestrictedLoc (R.needPos k) mul) p pv t do
-        E.Abs ZeroPos . E.Bind ZeroPos mul pv (Just t) <$> go u u vs
-    go _ t0@(T.Forall _ (K.Bind _ sigVar k t)) vs0@(p :@ v : vs) = do
-      let subBind tv = substituteType @Tc (Map.singleton sigVar (T.Var (R.needRange p R.@- k) tv))
-      let wrapAbs tv = E.TypeAbs @Tc ZeroPos . K.Bind (R.needRange p) tv k
+      withProgVarBind (unrestrictedLoc (needPos k) mul) (needPos p) pv t do
+        E.Abs NullRange . E.Bind NullRange mul pv (Just t) <$> go u u vs
+    go _ t0@(T.Forall _ (K.Bind _ sigVar k t)) vs0@(r :@ v : vs) = do
+      let subBind tv = substituteType @Tc (Map.singleton sigVar (T.Var (r @- k) tv))
+      let wrapAbs tv = E.TypeAbs @Tc NullRange . K.Bind r tv k
       case v of
         Left tv -> do
           local (bindTyVar tv k) do
@@ -471,7 +472,7 @@ checkAlignedBinds fullTy allVs e = go fullTy fullTy allVs
       -- The bind ›v‹ does not align with the expected type. While trying to
       -- align it the expected type got more and more destructured. The first
       -- argument to 'go' is the un-destructured expected type.
-      Error.fatal $ uncurryL Error.mismatchedBind v t
+      Error.fatal $ Pos.uncurryL Error.mismatchedBind (needPLoc v) t
 
 expectNominalKind ::
   (MonadValidate Errors m) =>
@@ -504,11 +505,11 @@ typeAppBase = flip go
   where
     go :: NonEmpty RnType -> RnType -> TcM env st (Pos, NameR Types, Maybe TcProtocolSubset, [RnType])
     go us = \case
-      T.Con p c ps -> pure (R.needPos p, c, ps, toList us)
+      T.Con p c ps -> pure (needPos p, c, ps, toList us)
       T.App _ t u -> go (u <| us) t
       t -> Error.fatal $ err us t
     err :: NonEmpty RnType -> RnType -> Diagnostic
-    err us t = Error.typeConstructorNParams (R.needPos t) (t <| us) (length us) 0
+    err us t = Error.typeConstructorNParams (needPos t) (t <| us) (length us) 0
 
 kisynthTypeCon ::
   (HasKiEnv env, HasKiSt st) =>
@@ -551,7 +552,7 @@ zipTypeParams loc name ps0 ts0 = go 0 (needPParams ps0) ts0
       Error.fatal $
         Error.typeConstructorNParams
           loc
-          (T.Con (R.needRange loc) name Nothing :| ts0)
+          (T.Con (needRange loc) name Nothing :| ts0)
           (n + length as)
           (n + length ps)
 
@@ -559,7 +560,7 @@ zipTypeParams loc name ps0 ts0 = go 0 (needPParams ps0) ts0
 typeRefSubstitutions :: TypeDecl Tc -> TypeRef -> Substitutions Tc
 typeRefSubstitutions decl ref =
   typeSubstitions . Map.fromList $
-    zip (fst . R.unL <$> declParams decl) (typeRefArgs ref)
+    zip (fst . unL <$> declParams decl) (typeRefArgs ref)
 
 -- | Applies a substitution to a 'TypeDecl'.
 --
@@ -584,10 +585,10 @@ kisynth =
       pure (T.Unit p, K.TU)
     T.Var p v -> do
       mk <- asks $ view kiEnvL >>> tcKindEnv >>> Map.lookup v
-      k <- Error.ifNothing (Error.unboundVar (R.needPos p) v) mk
-      pure (T.Var (p R.@- k) v, k)
+      k <- Error.ifNothing (Error.unboundVar (needPos p) v) mk
+      pure (T.Var (p @- k) v, k)
     T.Con p v ps -> do
-      kisynthTypeCon (R.needPos p) v ps []
+      kisynthTypeCon (needPos p) v ps []
     T.App _ t u -> do
       (p, c, ps, args) <- typeAppBase t (pure u)
       kisynthTypeCon p c ps args
@@ -655,7 +656,7 @@ tysynth :: RnExp -> TypeM (TcExp, TcType)
 tysynth =
   etaTcM . \case
     E.Lit p l -> do
-      let t = litType p l
+      let t = litType (needPos p) l
       pure (E.Lit p l, t)
 
     --
@@ -665,25 +666,25 @@ tysynth =
           <$> tysynth e1
           <*> tysynth e2
 
-      let t = T.Pair (R.needRange p) t1 t2
+      let t = T.Pair (needRange p) t1 t2
       pure (E.Pair p e1' e2', t)
 
     --
     E.Var p v -> do
-      synthVariable p v >>= Error.ifNothing (Error.unboundVar p v)
+      synthVariable (needPos p) v >>= Error.ifNothing (Error.unboundVar (needPos p) v)
 
     --
     E.Con p v -> do
-      synthVariable p v >>= Error.ifNothing (Error.undeclaredCon p v)
+      synthVariable (needPos p) v >>= Error.ifNothing (Error.undeclaredCon (needPos p) v)
 
     --
     E.Abs p bnd -> do
-      (bnd', ty) <- tysynthBind p bnd
+      (bnd', ty) <- tysynthBind (needPos p) bnd
       pure (E.Abs p bnd', ty)
 
     --
     E.TypeAbs p bnd -> do
-      (bnd', ty) <- tysynthTyBind tysynth p bnd
+      (bnd', ty) <- tysynthTyBind tysynth (needPos p) bnd
       pure (E.TypeAbs p bnd', ty)
 
     --
@@ -701,7 +702,7 @@ tysynth =
       -- the former. In theory, this allows the `fork` machinery to eagerly
       -- close the connection. In practice this does not make much of a
       -- difference.
-      let resultTy = buildSessionType p T.In [ty] $ T.End (R.needRange p) T.In
+      let resultTy = buildSessionType (needPos p) T.In [ty] $ T.End p T.In
       pure (E.Fork p e', resultTy)
 
     --
@@ -710,7 +711,7 @@ tysynth =
       let k = typeKind ty
       when (k </=? K.TU) do
         Error.add $ Error.unexpectedForkKind "fork_" e ty k K.TU
-      pure (E.Fork_ p e', T.Unit (R.needRange p))
+      pure (E.Fork_ p e', T.Unit p)
 
     --
     E.App p e1 e2 -> do
@@ -725,7 +726,7 @@ tysynth =
     --
     E.TypeApp _ (E.Exp (BuiltinNew p)) t -> do
       t' <- kicheck t K.SL
-      let newT = T.Pair (R.needRange p) t' (T.Dualof (R.needRange p) t')
+      let newT = T.Pair p t' (T.Dualof p t')
       pure (E.New p t', newT)
     E.TypeApp p e t -> do
       (e', eTy) <- tysynth e
@@ -742,18 +743,18 @@ tysynth =
       -- Check for TU is deliberate here. It is unclear if a linear value would
       -- be well behaved.
       ty' <- kicheck ty K.TU
-      withProgVarBind Nothing p v ty' do
+      withProgVarBind Nothing (needPos p) v ty' do
         r' <- checkRecLam r ty'
         pure (E.Rec p v ty' r', ty')
 
     -- 'let' __without__ a type signature.
     E.UnLet p v Nothing e body -> do
       (e', eTy) <- tysynth e
-      withProgVarBind Nothing p v eTy do
+      withProgVarBind Nothing (needPos p) v eTy do
         (body', bodyTy) <- tysynth body
         let branch =
               E.CaseBranch
-                { branchPos = p,
+                { branchRange = p,
                   branchBinds = Identity (p :@ v),
                   branchExp = body'
                 }
@@ -768,11 +769,11 @@ tysynth =
     E.UnLet p v (Just ty) e body -> do
       ty' <- kicheck ty K.TL
       e' <- tycheck e ty'
-      withProgVarBind Nothing p v ty' do
+      withProgVarBind Nothing (needPos p) v ty' do
         (body', bodyTy) <- tysynth body
         let branch =
               E.CaseBranch
-                { branchPos = p,
+                { branchRange = p,
                   branchBinds = Identity (p :@ v),
                   branchExp = body'
                 }
@@ -786,10 +787,10 @@ tysynth =
     --
     E.PatLet p c vs e body -> do
       (e', eTy) <- tysynth e
-      pat <- extractMatchableType "Pattern let expression" (pos e) eTy
+      pat <- extractMatchableType "Pattern let expression" (needPos e) eTy
       let branch =
             E.CaseBranch
-              { branchPos = pos c,
+              { branchRange = getRange c,
                 branchExp = body,
                 branchBinds = vs
               }
@@ -798,27 +799,27 @@ tysynth =
               { casesPatterns = Map.singleton (unL c) branch,
                 casesWildcard = Nothing
               }
-      checkPatternExpr p e' cases pat Nothing
+      checkPatternExpr (needPos p) e' cases pat Nothing
 
     --
     E.Cond p e eThen eElse -> do
-      checkIfExpr p e eThen eElse Nothing
+      checkIfExpr (needPos p) e eThen eElse Nothing
 
     --
     E.Case p e cases -> do
       (e', eTy) <- tysynth e
-      pat <- extractMatchableType "Case expression scrutinee" (pos e) eTy
-      checkPatternExpr p e' cases pat Nothing
+      pat <- extractMatchableType "Case expression scrutinee" (needPos e) eTy
+      checkPatternExpr (needPos p) e' cases pat Nothing
 
     --
     E.Select p lcon@(_ :@ con) | con == conPair -> do
       v1 <- freshLocal "a"
       v2 <- freshLocal "b"
-      let tyX = T.Var @Tc (R.needRange p R.@- kiX)
+      let tyX = T.Var @Tc (p @- kiX)
           kiX = K.TL
-      let params = [R.needRange p R.:@ (v1, kiX), R.needRange p R.:@ (v2, kiX)]
-          pairTy = T.Pair R.NullRange (tyX v1) (tyX v2)
-      ty <- buildSelectType p params pairTy [tyX v1, tyX v2]
+      let params = [p :@ (v1, kiX), p :@ (v2, kiX)]
+          pairTy = T.Pair NullRange (tyX v1) (tyX v2)
+      ty <- buildSelectType (needPos p) params pairTy [tyX v1, tyX v2]
       pure (E.Select p lcon, ty)
 
     --
@@ -827,10 +828,10 @@ tysynth =
             ValueCon conDecl <- MaybeT $ asks $ tcCheckedValues >>> Map.lookup con
             parentDecl <- MaybeT $ asks $ tcCheckedTypes >>> Map.lookup (conParent conDecl)
             pure (conDecl, parentDecl)
-      (conDecl, parentDecl) <- Error.ifNothing (uncurryL Error.undeclaredCon lcon) =<< findConDecl
-      (params, ref) <- instantiateDeclRef ZeroPos (conParent conDecl) parentDecl
+      (conDecl, parentDecl) <- Error.ifNothing (Pos.uncurryL Error.undeclaredCon (needPLoc lcon)) =<< findConDecl
+      (params, ref) <- instantiateDeclRef Pos.ZeroPos (conParent conDecl) parentDecl
       let sub = applySubstitutions (typeRefSubstitutions parentDecl ref)
-      ty <- buildSelectType p params (T.Type ref) (sub <$> conItems conDecl)
+      ty <- buildSelectType (needPos p) params (T.Type ref) (sub <$> conItems conDecl)
       pure (E.Select p lcon, ty)
 
     --
@@ -854,12 +855,12 @@ buildSelectType ::
   TcM env st TcType
 buildSelectType p params t us = do
   varS <- freshLocal "s"
-  let tyS = T.Var @Tc (R.needRange p R.@- kiS) varS
+  let tyS = T.Var @Tc (needRange p @- kiS) varS
       kiS = K.SL
-  let foralls = buildForallType params . buildForallType [R.needRange p R.:@ (varS, kiS)]
-  let arrLhs = buildSessionType ZeroPos T.Out [t]
-      arrRhs = buildSessionType ZeroPos T.Out us
-  let ty = foralls $ T.Arrow (R.needRange p) K.Un (arrLhs tyS) (arrRhs tyS)
+  let foralls = buildForallType params . buildForallType [needRange p :@ (varS, kiS)]
+  let arrLhs = buildSessionType Pos.ZeroPos T.Out [t]
+      arrRhs = buildSessionType Pos.ZeroPos T.Out us
+  let ty = foralls $ T.Arrow (needRange p) K.Un (arrLhs tyS) (arrRhs tyS)
   pure ty
 
 data PatternType
@@ -876,7 +877,7 @@ patternBranches :: PatternType -> TypeM (TcNameMap Values [TcType])
 patternBranches = \case
   PatternRef ref -> do
     let subst d = substituteTypeConstructors (typeRefSubstitutions d ref) d
-    let missingCon = Error.undeclaredCon (R.needPos ref) (typeRefName ref)
+    let missingCon = Error.undeclaredCon (needPos ref) (typeRefName ref)
     mdecl <- asks $ tcCheckedTypes >>> Map.lookup (typeRefName ref)
     fmap snd . subst <$> Error.ifNothing missingCon mdecl
   PatternPair _ t1 t2 ->
@@ -917,17 +918,17 @@ synthVariable p name = runMaybeT (useLocal <|> useGlobal)
       info <- MaybeT $ gets $ tcTypeEnv >>> Map.lookup name
       used <- useVar p name info
       tcTypeEnvL %= Map.insert name used
-      pure (E.Var p name, varType info)
+      pure (E.Var (needRange p) name, varType info)
 
     useGlobal = do
       global <- MaybeT $ asks $ tcCheckedValues >>> Map.lookup name
       case global of
         ValueGlobal _ ty ->
-          pure (E.Var p name, ty)
+          pure (E.Var (needRange p) name, ty)
         ValueCon (DataCon _ parent _ mul items) -> do
           decl <- MaybeT $ asks $ tcCheckedTypes >>> Map.lookup parent
           ty <- lift $ buildDataConType p parent decl mul items
-          pure (E.Con p name, ty)
+          pure (E.Con (needRange p) name, ty)
         ValueCon (ProtocolCon _ parent _ _) ->
           Error.fatal $ Error.protocolConAsValue p name parent
 
@@ -941,8 +942,8 @@ instantiateDeclRef p name decl = do
         { typeRefName = name,
           typeRefKind = tcDeclKind decl,
           typeRefExcl = mempty,
-          typeRefArgs = (\(p :@ tv, k) -> T.Var (R.needRange p R.@- k) tv) <$> needPParams params,
-          typeRefNameRange = R.needRange p
+          typeRefArgs = (\(p :@ tv, k) -> T.Var (needRange p @- k) tv) <$> needPParams params,
+          typeRefNameRange = needRange p
         }
     )
 
@@ -977,20 +978,20 @@ appTArrow = go id
 
 checkIfExpr :: Pos -> RnExp -> RnExp -> RnExp -> Maybe TcType -> TypeM (TcExp, TcType)
 checkIfExpr loc eCond eThen eElse mExpectedTy = do
-  eCond' <- tycheck eCond (T.Type (builtinRef R.NullRange typeBool))
+  eCond' <- tycheck eCond (T.Type (builtinRef NullRange typeBool))
   (mresTy, (eThen', eElse')) <- runBranched loc mExpectedTy do
     (,)
-      <$> checkBranch (Error.CondThen (pos eThen)) (checkOrSynth eThen)
-      <*> checkBranch (Error.CondElse (pos eElse)) (checkOrSynth eElse)
+      <$> checkBranch (Error.CondThen (needPos eThen)) (checkOrSynth eThen)
+      <*> checkBranch (Error.CondElse (needPos eElse)) (checkOrSynth eElse)
   let resTy = error "checkIfExpr: no result type" `fromMaybe` mresTy
 
   let branches =
         Map.fromList
-          [ (conTrue, E.CaseBranch (pos eThen) [] eThen'),
-            (conFalse, E.CaseBranch (pos eElse) [] eElse')
+          [ (conTrue, E.CaseBranch (getRange eThen) [] eThen'),
+            (conFalse, E.CaseBranch (getRange eElse) [] eElse')
           ]
   let eCase =
-        E.Exp . ValueCase loc eCond' $
+        E.Exp . ValueCase (needRange loc) eCond' $
           E.CaseMap
             { casesPatterns = branches,
               casesWildcard = Nothing
@@ -1003,10 +1004,10 @@ checkPatternExpr loc scrut cases pat mExpectedTy = do
   case pat of
     MatchSession pat s -> do
       (cases', ty) <- checkSessionCase loc cases pat s mExpectedTy
-      pure (E.Exp $ RecvCase loc scrut cases', ty)
+      pure (E.Exp $ RecvCase (needRange loc) scrut cases', ty)
     MatchValue pat -> do
       (cases', ty) <- checkDataCase loc cases pat mExpectedTy
-      pure (E.Exp $ ValueCase loc scrut cases', ty)
+      pure (E.Exp $ ValueCase (needRange loc) scrut cases', ty)
 
 checkDataCase ::
   Pos -> RnCaseMap -> PatternType -> Maybe TcType -> TypeM (TcCaseMap [] Maybe, TcType)
@@ -1016,7 +1017,7 @@ checkDataCase loc cases patTy mExpectedTy =
     let nGiven = length (E.branchBinds b)
         nExpected = length fields
     errorIf (nGiven /= nExpected) $
-      Error.branchPatternBindingCount (pos b) con nExpected nGiven
+      Error.branchPatternBindingCount (needPos b) con nExpected nGiven
     -- Return the typed binds.
     pure (zip (E.branchBinds b) fields)
 
@@ -1026,7 +1027,7 @@ buildForallType :: Params TcStage -> TcType -> TcType
 buildForallType = needPParams >>> foldMap (Endo . mkForall) >>> appEndo
   where
     mkForall :: (Located (TypeVar TcStage), K.Kind) -> TcType -> TcType
-    mkForall (p :@ tv, k) = T.Forall R.NullRange . K.Bind (R.needRange p) tv k
+    mkForall (p :@ tv, k) = T.Forall NullRange . K.Bind (needRange p) tv k
 
 buildDataConType ::
   Pos ->
@@ -1038,11 +1039,11 @@ buildDataConType ::
 buildDataConType p name decl mul items = do
   (params, ref) <- instantiateDeclRef p name decl
   let subs = typeRefSubstitutions decl ref
-  let conArrow = foldr (T.Arrow R.NullRange mul) (T.Type ref) (applySubstitutions subs <$> items)
+  let conArrow = foldr (T.Arrow NullRange mul) (T.Type ref) (applySubstitutions subs <$> items)
   pure $ buildForallType params conArrow
 
 buildSessionType :: Pos -> T.Polarity -> [TcType] -> TcType -> TcType
-buildSessionType loc pol fields s = foldr (T.Session (R.needRange loc) pol) s fields
+buildSessionType loc pol fields s = foldr (T.Session (needRange loc) pol) s fields
 
 checkSessionCase ::
   Pos ->
@@ -1054,7 +1055,7 @@ checkSessionCase ::
 checkSessionCase loc cases patTy s mExpectedTy = do
   (cmap, ty) <- checkCaseExpr loc False cases patTy mExpectedTy \_con fields b -> etaTcM do
     -- Get the variable to bind and its type.
-    let vTy = buildSessionType (pos b) T.In fields s
+    let vTy = buildSessionType (needPos b) T.In fields s
     v <- Error.ifNothing (Error.invalidSessionCaseBranch b) $ case E.branchBinds b of
       [v] -> Just v
       _ -> Nothing
@@ -1091,10 +1092,10 @@ checkCaseExpr loc allowWild cmap patTy mExpectedTy typedBinds = etaTcM do
         ProgVar TcStage ->
         E.CaseBranch [] Rn ->
         Branched TcType (E.CaseBranch f Tc)
-      go con branch = checkBranch (Error.PatternBranch (pos branch) con) \mty -> do
+      go con branch = checkBranch (Error.PatternBranch (needPos branch) con) \mty -> do
         let branchError =
               Error.mismatchedCaseConstructor
-                (pos branch)
+                (needPos branch)
                 (originalPatternType patTy)
                 con
         -- Check that the constructor is valid for the matched type.
@@ -1110,9 +1111,9 @@ checkCaseExpr loc allowWild cmap patTy mExpectedTy typedBinds = etaTcM do
   let goWild ::
         E.CaseBranch Identity Rn ->
         Branched TcType (E.CaseBranch Identity Tc)
-      goWild branch = checkBranch (Error.WildcardBranch $ pos branch) \mty -> do
-        errorIf (not hasMissingBranches) $ Error.unnecessaryWildcard (pos branch)
-        errorIf (not allowWild) $ Error.wildcardNotAllowed (pos branch) loc
+      goWild branch = checkBranch (Error.WildcardBranch $ needPos branch) \mty -> do
+        errorIf (not hasMissingBranches) $ Error.unnecessaryWildcard (needPos branch)
+        errorIf (not allowWild) $ Error.wildcardNotAllowed (needPos branch) loc
         let binds = (,originalPatternType patTy) <$> E.branchBinds branch
         (e, eTy) <- withProgVarBinds Nothing (toList binds) do
           checkOrSynth (E.branchExp branch) mty
@@ -1276,16 +1277,16 @@ checkConsumedOverlap m1 other1 m2 other2 = Error.adds errors
 -- 'TypeRef' without any arguments or constructor restrictions.
 litType :: Pos -> E.Lit -> TcType
 litType p = \case
-  E.Unit -> T.Unit (R.needRange p)
-  E.Int _ -> T.Type (builtinRef (R.needRange p) typeInt)
-  E.Char _ -> T.Type (builtinRef (R.needRange p) typeChar)
-  E.String _ -> T.Type (builtinRef (R.needRange p) typeString)
+  E.Unit -> T.Unit (needRange p)
+  E.Int _ -> T.Type (builtinRef (needRange p) typeInt)
+  E.Char _ -> T.Type (builtinRef (needRange p) typeChar)
+  E.String _ -> T.Type (builtinRef (needRange p) typeString)
 
 -- | Creates a reference to a builtin type.
 --
 -- The kind will always be 'K.TU', without any arguments, and no excluded
 -- constructors.
-builtinRef :: R.SrcRange -> TypeVar TcStage -> TypeRef
+builtinRef :: SrcRange -> TypeVar TcStage -> TypeRef
 builtinRef refRange refName =
   TypeRef
     { typeRefName = refName,
@@ -1299,13 +1300,13 @@ builtinRef refRange refName =
 -- (/E-LinAbs/ or /E-UnAbs/).
 tysynthBind :: Pos -> E.Bind Rn -> TypeM (E.Bind Tc, TcType)
 tysynthBind absLoc (E.Bind p _ v Nothing _) = do
-  Error.fatal $ Error.synthUntypedLambda absLoc p v
+  Error.fatal $ Error.synthUntypedLambda absLoc (needPos p) v
 tysynthBind absLoc (E.Bind p m v (Just ty) e) = do
   ty' <- kicheck ty K.TL
-  (e', eTy) <- withProgVarBind (unrestrictedLoc absLoc m) p v ty' (tysynth e)
+  (e', eTy) <- withProgVarBind (unrestrictedLoc absLoc m) (needPos p) v ty' (tysynth e)
 
   -- Construct the resulting type.
-  let funTy = T.Arrow (R.needRange absLoc) m ty' eTy
+  let funTy = T.Arrow (needRange absLoc) m ty' eTy
   pure (E.Bind p m v (Just ty') e', funTy)
 
 tycheckBind :: Pos -> E.Bind Rn -> TcType -> TypeM (E.Bind Tc)
@@ -1322,9 +1323,9 @@ tycheckBind absLoc bind@(E.Bind p m v mVarTy e) bindTy =
       --
       -- This checkes that the linearities of the arrows are well behaved
       -- relative to each other.
-      requireSubtype absExpr (T.Arrow (R.needRange p) m varTy u) bindTy
+      requireSubtype absExpr (T.Arrow (needRange p) m varTy u) bindTy
       -- Check the binding's body.
-      e' <- withProgVarBind (unrestrictedLoc absLoc m) p v varTy (tycheck e u)
+      e' <- withProgVarBind (unrestrictedLoc absLoc m) (needPos p) v varTy (tycheck e u)
       pure $ E.Bind p m v (Just varTy) e'
     Nothing -> do
       Error.fatal $ Error.noArrowType absExpr bindTy
@@ -1340,7 +1341,7 @@ tysynthTyBind ::
   TypeM (K.Bind TcStage b, TcType)
 tysynthTyBind synth p (K.Bind p' v k a) = do
   (a', t) <- local (bindTyVar v k) (synth a)
-  let allT = T.Forall (R.needRange p) (K.Bind p' v k t)
+  let allT = T.Forall (needRange p) (K.Bind p' v k t)
   pure (K.Bind p' v k a', allT)
 
 tycheckTyBind ::
@@ -1353,7 +1354,7 @@ tycheckTyBind ::
 tycheckTyBind check bindExpr b@(K.Bind p v k a) t =
   case appTArrow t of
     Just (K.Bind p' v' k' t') | k == k' -> do
-      let substMap = Map.singleton v' $ T.Var (R.needRange p' R.@- k') v
+      let substMap = Map.singleton v' $ T.Var (needRange p' @- k') v
       let tSubst = substituteType @Tc substMap t'
       local (bindTyVar v k) do
         K.Bind p v k <$> check a tSubst
@@ -1364,12 +1365,12 @@ checkRecLam :: E.RecLam Rn -> TcType -> TypeM (E.RecLam Tc)
 checkRecLam = go
   where
     go (E.RecTermAbs p b) =
-      fmap (E.RecTermAbs p) . tycheckBind p b
+      fmap (E.RecTermAbs p) . tycheckBind (needPos p) b
     go abs@(E.RecTypeAbs p b) =
       fmap (E.RecTypeAbs p) . tycheckTyBind go (E.RecAbs abs) b
 
 unrestrictedLoc :: (HasPos a) => a -> K.Multiplicity -> Maybe Pos
-unrestrictedLoc p K.Un = Just $! pos p
+unrestrictedLoc p K.Un = Just $! needPos p
 unrestrictedLoc _ K.Lin = Nothing
 
 freshLocal :: String -> TcM env st (TcName scope)
@@ -1390,7 +1391,7 @@ withProgVarBinds !mUnArrLoc vtys action = etaTcM do
         let ki = typeKind ty
         usage <- case K.multiplicity ki of
           Just K.Lin
-            | isWild v -> UnUsage <$ Error.add (Error.linearWildcard p ty)
+            | isWild v -> UnUsage <$ Error.add (Error.linearWildcard (needPos p) ty)
             | otherwise -> pure LinUnunsed
           Just K.Un -> pure UnUsage
           Nothing -> UnUsage <$ Error.add (Error.unexpectedKind ty ki [K.TL])
@@ -1398,7 +1399,7 @@ withProgVarBinds !mUnArrLoc vtys action = etaTcM do
               Var
                 { varUsage = usage,
                   varType = ty,
-                  varLocation = p
+                  varLocation = needPos p
                 }
         pure (v, var)
 
@@ -1431,13 +1432,13 @@ withProgVarBinds !mUnArrLoc vtys action = etaTcM do
 -- | Like 'withProgVarBinds' but for a single binding.
 withProgVarBind ::
   Maybe Pos -> Pos -> ProgVar TcStage -> TcType -> TypeM a -> TypeM a
-withProgVarBind mp varLoc pv ty = withProgVarBinds mp [(varLoc :@ pv, ty)]
+withProgVarBind mp varLoc pv ty = withProgVarBinds mp [(needRange varLoc :@ pv, ty)]
 
 tycheck :: RnExp -> TcType -> TypeM TcExp
 tycheck e u = case e of
   --
   E.Abs p bnd -> do
-    bnd' <- tycheckBind p bnd u
+    bnd' <- tycheckBind (needPos p) bnd u
     pure (E.Abs p bnd')
 
   --
@@ -1448,7 +1449,7 @@ tycheck e u = case e of
   --
   E.App p e1 e2 -> do
     (e2', t2) <- tysynth e2
-    e1' <- tycheck e1 (T.Arrow (R.needRange p) K.Lin t2 u)
+    e1' <- tycheck e1 (T.Arrow (needRange p) K.Lin t2 u)
     pure (E.App p e1' e2')
 
   --
@@ -1461,11 +1462,11 @@ tycheck e u = case e of
   E.UnLet p v mty e body | bodyTy <- u -> do
     mty' <- maybe (pure Nothing) (\ty -> Just <$> kicheck ty K.TL) mty
     (e', ty') <- checkOrSynth e mty'
-    withProgVarBind Nothing p v ty' do
+    withProgVarBind Nothing (needPos p) v ty' do
       body' <- tycheck body bodyTy
       let branch =
             E.CaseBranch
-              { branchPos = p,
+              { branchRange = p,
                 branchBinds = Identity (p :@ v),
                 branchExp = body'
               }
@@ -1479,10 +1480,10 @@ tycheck e u = case e of
   --
   E.PatLet p c vs e body | bodyTy <- u -> do
     (e', eTy) <- tysynth e
-    pat <- extractMatchableType "Pattern let expression" (pos e) eTy
+    pat <- extractMatchableType "Pattern let expression" (needPos e) eTy
     let branch =
           E.CaseBranch
-            { branchPos = pos c,
+            { branchRange = getRange c,
               branchExp = body,
               branchBinds = vs
             }
@@ -1491,17 +1492,17 @@ tycheck e u = case e of
             { casesPatterns = Map.singleton (unL c) branch,
               casesWildcard = Nothing
             }
-    fst <$> checkPatternExpr p e' cases pat (Just bodyTy)
+    fst <$> checkPatternExpr (needPos p) e' cases pat (Just bodyTy)
 
   --
   E.Case p e cases | branchTy <- u -> do
     (e', eTy) <- tysynth e
-    pat <- extractMatchableType "Case expression scrutinee" (pos e) eTy
-    fst <$> checkPatternExpr p e' cases pat (Just branchTy)
+    pat <- extractMatchableType "Case expression scrutinee" (needPos e) eTy
+    fst <$> checkPatternExpr (needPos p) e' cases pat (Just branchTy)
 
   --
   E.Cond p e eThen eElse -> do
-    fst <$> checkIfExpr p e eThen eElse (Just u)
+    fst <$> checkIfExpr (needPos p) e eThen eElse (Just u)
 
   -- fallback
   _ -> do
@@ -1532,7 +1533,7 @@ bindTyVars vars = kiEnvL . tcKindEnvL <>~ varMap
     varMap = foldl' (\m (v, k) -> Map.insert v k m) Map.empty vars
 
 bindParams :: (HasKiEnv env) => Params TcStage -> env -> env
-bindParams = bindTyVars . fmap R.unL
+bindParams = bindTyVars . fmap unL
 
 errorIf :: (MonadValidate Errors m) => Bool -> Diagnostic -> m ()
 errorIf True e = Error.add e

@@ -115,12 +115,12 @@ coloredPtr p =
 advanceLoc :: SrcLoc -> Int -> SrcLoc
 advanceLoc = coerce plusPtr
 
-data SrcRange = SrcRange !SrcLoc !SrcLoc
+data SrcRange = SR !SrcLoc !SrcLoc
   deriving stock (Eq, Ord, Generic, Lift)
 
 -- | A range of size zero, located at 'NullLoc'.
 pattern NullRange :: SrcRange
-pattern NullRange = SrcRange NullLoc NullLoc
+pattern NullRange = SR NullLoc NullLoc
 
 -- | Constructs or deconstructs a 'SrcRange' from a start location and a size.
 pattern SizedRange :: SrcLoc -> Int -> SrcRange
@@ -130,6 +130,16 @@ pattern SizedRange start size <-
     SizedRange start size = SrcRange start (start `advanceLoc` size)
 
 {-# COMPLETE SizedRange #-}
+
+pattern SrcRange :: SrcLoc -> SrcLoc -> SrcRange
+pattern SrcRange start stop <- SR start stop
+  where
+    SrcRange start stop =
+      if start == NullLoc || stop == NullLoc
+        then NullRange
+        else SR start stop
+
+{-# COMPLETE SrcRange #-}
 
 instance Semigroup SrcRange where
   SrcRange s1 e1 <> SrcRange s2 e2 =

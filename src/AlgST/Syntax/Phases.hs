@@ -1,14 +1,9 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module AlgST.Syntax.Phases
-  ( module AlgST.Syntax.Phases,
-    module AlgST.Syntax.Pos,
-  )
-where
+module AlgST.Syntax.Phases where
 
 import AlgST.Syntax.Name
-import AlgST.Syntax.Pos
 import Data.Kind
 
 type Phase = Type

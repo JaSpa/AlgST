@@ -60,6 +60,7 @@ import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Name
 import AlgST.Syntax.Phases
 import AlgST.Syntax.Type qualified as T
+import AlgST.Util.SourceLocation
 import Control.Applicative
 import Data.Functor.Identity
 import GHC.Generics (Generic)
@@ -187,7 +188,7 @@ data Exp x
 
 deriving stock instance (ForallX Lift x, T.ForallX Lift x) => Lift (Exp x)
 
-deriving via (Generically (Exp x)) instance (ForallX HasPos x) => HasPos (Exp x)
+deriving via (Generically (Exp x)) instance (ForallX HasRange x) => HasRange (Exp x)
 
 -- | A restricted version of 'Exp' which binds at least one value via lambda
 -- abstraction.
@@ -242,7 +243,7 @@ emptyCaseMap :: (Alternative g) => CaseMap' f g x
 emptyCaseMap = CaseMap mempty empty
 
 data CaseBranch f x = CaseBranch
-  { branchPos :: Pos,
+  { branchRange :: SrcRange,
     branchBinds :: f (Located (XProgVar x)),
     branchExp :: Exp x
   }
@@ -251,8 +252,8 @@ deriving stock instance
   (ForallX Lift x, T.ForallX Lift x, forall a. (Lift a) => Lift (f a)) =>
   Lift (CaseBranch f x)
 
-instance HasPos (CaseBranch f x) where
-  pos = branchPos
+instance HasRange (CaseBranch f x) where
+  getRange = branchRange
 
 -- Bind
 
@@ -263,5 +264,5 @@ data Bind x
 
 deriving stock instance (ForallX Lift x, T.ForallX Lift x) => Lift (Bind x)
 
-instance (HasPos (XBind x)) => HasPos (Bind x) where
-  pos (Bind x _ _ _ _) = pos x
+instance (HasRange (XBind x)) => HasRange (Bind x) where
+  getRange (Bind x _ _ _ _) = getRange x

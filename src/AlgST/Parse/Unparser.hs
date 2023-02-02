@@ -33,6 +33,7 @@ import AlgST.Syntax.Name
 import AlgST.Syntax.Operators qualified as Op
 import AlgST.Syntax.Phases
 import AlgST.Syntax.Type qualified as T
+import AlgST.Util.SourceLocation
 import Data.Bifunctor
 import Data.DList qualified as DL
 import Data.Foldable
@@ -299,7 +300,7 @@ showCaseMap m =
       ++ [showWild b | b <- toList (casesWildcard m)]
   where
     showAssoc (c, CaseBranch {branchBinds = binds, branchExp = e}) =
-      unwords (pprName . unL <$> ZeroPos :@ c : toList binds)
+      unwords (pprName . unL <$> NullRange :@ c : toList binds)
         ++ " -> "
         ++ show e
     showWild CaseBranch {branchBinds = Identity (_ :@ a), branchExp = e} =

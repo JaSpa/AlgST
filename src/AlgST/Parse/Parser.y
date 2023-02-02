@@ -22,7 +22,6 @@ module AlgST.Parse.Parser
   , ParsedModule(..)
   , emptyParsedModule
   , resolveImports
-  , module AlgST.Syntax.Pos
   ) where
 
 import           Control.Category              ((>>>), (<<<))
@@ -60,8 +59,6 @@ import qualified AlgST.Syntax.Kind             as K
 import           AlgST.Syntax.Module
 import           AlgST.Syntax.Name
 import           AlgST.Syntax.Operators
-import           AlgST.Syntax.Pos              (Pos)
-import qualified AlgST.Syntax.Pos              as Pos
 import qualified AlgST.Syntax.Type             as T
 import           AlgST.Util
 import           AlgST.Util.SourceLocation
@@ -227,15 +224,15 @@ ImportScope :: { SrcRange -> Located Scope }
 -- Pragmas
 -------------------------------------------------------------------------------
 
-PragmaBenchmark :: { Token -> Token -> ModuleBuilder }
-  : UPPER_ID { \pragmaStart pragmaEnd -> liftModuleBuilder do
+PragmaBenchmark :: { SrcRange -> ModuleBuilder }
+  : UPPER_ID { \pragmaRange -> liftModuleBuilder do
       when (unL $1 /= "BENCHMARK") do
-        addErrors [errorUnknownPragma pragmaStart pragmaEnd (getRange $1)]
+        addErrors [errorUnknownPragma pragmaRange (getRange $1)]
     }
 
 Pragma :: { ModuleBuilder }
   : '{-#' PragmaBenchmark opt('!') opt(STR) TypeAtom opt(nl) TypeAtom opt(nl) '#-}' {
-      $2 $1 $9 >>> insertBenchmark Benchmark
+      $2 ($1 `runion` $9) >>> insertBenchmark Benchmark
         { benchName   = foldMap unL $4
         , benchExpect = isNothing $3
         , benchT1     = $5
@@ -243,7 +240,7 @@ Pragma :: { ModuleBuilder }
         }
     }
   | '{-#' PragmaBenchmark opt('!') opt(STR) nl Type nl Type opt(nl) '#-}' {
-      $2 $1 $10 >>> insertBenchmark Benchmark
+      $2 ($1 `runion` $10) >>> insertBenchmark Benchmark
         { benchName   = foldMap unL $4
         , benchExpect = isNothing $3
         , benchT1     = $6
@@ -332,7 +329,7 @@ DataCons :: { Constructors PStage PType }
   | DataCons '|' DataCon {% uncurry insertNoDuplicates $3 $1 }
 
 DataCon :: { (ProgVar PStage, (SrcRange, [PType])) }
-  : Constructor TypeSeq { (unL $1, (needRange $1, DL.toList $2)) }
+  : Constructor TypeSeq { (unL $1, (getRange $1, DL.toList $2)) }
 
 ValueParams :: { [Located AName] }
   : bindings(ValueParam) {%
@@ -354,40 +351,41 @@ TyVarList :: { DL.DList (Located AName) }
 -------------------------------------------------------------------------------
 
 EAtom :: { PExp }
-  : INT                            { E.Lit (needPos $1) $ E.Int    (unL $1) }
-  | CHAR                           { E.Lit (needPos $1) $ E.Char   (unL $1) }
-  | STR                            { E.Lit (needPos $1) $ E.String (unL $1) }
-  | '()'                           { E.Lit (needPos $1) E.Unit }
+  : INT                            { E.Lit (getRange $1) $ E.Int    (unL $1) }
+  | CHAR                           { E.Lit (getRange $1) $ E.Char   (unL $1) }
+  | STR                            { E.Lit (getRange $1) $ E.String (unL $1) }
+  | '()'                           { E.Lit (getRange $1) E.Unit }
   | '(,)'                          {% fatalError $ errorMisplacedPairCon @Values (getRange $1) }
-  | ProgVar                        { Pos.uncurryL E.Var (needPLoc $1) }
-  | Constructor                    { Pos.uncurryL E.Con (needPLoc $1) }
+  | ProgVar                        { uncurryL E.Var $1 }
+  | Constructor                    { uncurryL E.Con $1 }
   | '(' ExpInner ')'               {% $2 $ InParens $ $1 `runion` $3 }
-  | '(' Exp ',' Exp ')'            { E.Pair (needPos $1) $2 $4 }
-  | case Exp of Cases              { E.Case (needPos $1) $2 $4 }
-  | new                            { E.Exp $ Left $ BuiltinNew (needPos $1) }
-  | fork                           { E.Exp $ Left $ BuiltinFork (needPos $1) }
-  | fork_                          { E.Exp $ Left $ BuiltinFork_ (needPos $1) }
+  | '(' Exp ',' Exp ')'            { E.Pair ($1 `runion` $5) $2 $4 }
+  | case Exp of Cases              { E.Case ($1 `runion` $4) $2 (unL $4) }
+  | new                            { E.Exp $ Left $ BuiltinNew   $ getRange $1 }
+  | fork                           { E.Exp $ Left $ BuiltinFork  $ getRange $1 }
+  | fork_                          { E.Exp $ Left $ BuiltinFork_ $ getRange $1 }
 
 ETail :: { PExp }
   : LamExp                         { $1 }
-  | if Exp then Exp else Exp       { E.Cond (needPos $1) $2 $4 $6 }
-  | let LetBind '=' Exp in Exp     { $2 (needPos $1) $4 $6 }
-  | RecExp                         {% $1 E.Rec }
-  | let RecExp in Exp              {% $2 \p v t r ->
-      E.UnLet (needPos $1) v Nothing (E.Rec p v t r) $4
+  | if Exp then Exp else Exp       { E.Cond ($1 `runion` $6) $2 $4 $6 }
+  | let LetBind '=' Exp in Exp     { $2 ($1 `runion` $6) $4 $6 }
+  | RecExp                         { snd $1 }
+  | let RecExp in Exp              { do
+      let (v, r) = $2
+      E.UnLet ($1 `runion` $4) v Nothing r $4
     }
 
 EApp :: { PExp }
   : EAtom                          { $1 }
-  | EApp EAtom                     { E.App (needPos $1) $1 $2 }
-  | EApp '[' TypeApps ']'          { E.foldTypeApps (const needPos) $1 $3 }
-  | select Constructor             { E.Select (needPos $1) (needPLoc $2) }
-  | select '(,)'                   { E.Select (needPos $1) (needPLoc ($2 @- PairCon)) }
+  | EApp EAtom                     { E.App ($1 `runion` $2) $1 $2 }
+  | EApp '[' TypeApps ']'          { E.foldTypeApps (\_ _ -> $1 `runion` $4) $1 $3 }
+  | select Constructor             { E.Select ($1 `runion` $2) $2 }
+  | select '(,)'                   { E.Select ($1 `runion` $2) ($2 @- PairCon) }
 
 EAppTail :: { PExp }
   : EApp                           { $1 }
   | ETail                          { $1 }
-  | EApp ETail                     { E.App (needPos $1) $1 $2 }
+  | EApp ETail                     { E.App ($1 `runion` $2) $1 $2 }
 
 EOps :: { Parenthesized -> Parser PExp }
   : OpTys
@@ -416,16 +414,29 @@ TypeApps :: { DL.DList PType }
   : Type                           { DL.singleton $1 }
   | TypeApps ',' Type              { $1 `DL.snoc` $3 }
 
-RecExp :: { forall a. (Pos -> ProgVar PStage -> PType -> E.RecLam Parse -> a) -> Parser a }
-  : rec ProgVar TySig '=' Exp {
-      \f -> case $5 of
-        E.RecAbs r -> pure $ f (needPos $1) (unL $2) $3 r
-        _ -> fatalError $ errorRecNoTermLambda (getRange $1) (needRange $5)
+-- RecExp :: { forall a. (Pos -> ProgVar PStage -> PType -> E.RecLam Parse -> a) -> Parser a }
+--   : rec ProgVar TySig '=' Exp {
+--       \f -> case $5 of
+--         E.RecAbs r -> pure $ f (needPos $1) (unL $2) $3 r
+--         _ -> fatalError $ errorRecNoTermLambda (getRange $1) (needRange $5)
+
+-- Parses a rec-expression and retuns the recursive name alongside.
+RecExp :: { (ProgVar PStage, PExp) }
+  : rec ProgVar TySig '=' Exp {% do
+      let fullRange = $1 `runion` $5
+      case $5 of
+        E.RecAbs r -> pure (unL $2, E.Rec fullRange (unL $2) $3 r)
+        _ -> fatalError $ errorRecNoTermLambda fullRange (getRange $1) (getRange $5)
     }
 
-LetBind :: { Pos -> PExp -> PExp -> PExp }
-  : ProgVarWild opt(TySig)        { \p -> E.UnLet p (unL $1) $2 }
-  | Pattern                       { \p -> uncurry (E.PatLet p) (bimap needPLoc (fmap needPLoc) $1) }
+-- Constructs a let-expression from a
+--
+--   * range (full expression range)
+--   * bound expression
+--   * continuation expression
+LetBind :: { SrcRange -> PExp -> PExp -> PExp }
+  : ProgVarWild opt(TySig)        { \r -> E.UnLet r (unL $1) $2 }
+  | Pattern                       { \r -> uncurry (E.PatLet r) $1 }
 
 LamExp :: { PExp }
   : lambda Abs Arrow Exp {% do
@@ -451,9 +462,9 @@ Abs :: { (SrcRange -> K.Multiplicity -> Endo PExp, Bool, SrcRange) }
         p :@ Right (v, _) | not (isWild v) -> Just (p @- Right v)
         _ -> Nothing
       let mkVAbs argRange (v, t) lamLoc m =
-            Endo $ E.Abs @Parse (needPos lamLoc) . E.Bind (needPos argRange) m v t
+            Endo $ E.Abs @Parse lamLoc . E.Bind argRange m v t
       let mkTAbs argRange (v, k) lamLoc _ =
-            Endo $ E.TypeAbs @Parse (needPos lamLoc) . K.Bind argRange v k
+            Endo $ E.TypeAbs @Parse lamLoc . K.Bind argRange v k
       let f1 = pure (,,)
             <*> lmap (\(r :@ arg) -> either (mkVAbs r) (mkTAbs r) arg) L1.sconcat
             <*> L1.fromFold (L.any (isLeft . unL))
@@ -461,19 +472,19 @@ Abs :: { (SrcRange -> K.Multiplicity -> Endo PExp, Bool, SrcRange) }
       pure $ L1.fold1 f1 binds
     }
 
-Abs1 :: { Located (Either (ProgVar PStage, Maybe PType) (TypeVar PStage, K.Kind)) } 
+Abs1 :: { Located (Either (ProgVar PStage, Maybe PType) (TypeVar PStage, K.Kind)) }
   : wildcard(ProgVar)                  { $1 @- Left (unL $1, Nothing) }
   | '(' wildcard(ProgVar) ')'          { ($1 `runion` $3) @- Left (unL $2, Nothing) }
   | '(' wildcard(ProgVar) ':' Type ')' { ($1 `runion` $5) @- Left (unL $2, Just $4) }
   | '[' wildcard(TypeVar) ':' Kind ']' { ($1 `runion` $5) @- Right (unL $2, unL $4) }
 
-Cases :: { PCaseMap }
+Cases :: { Located PCaseMap }
   : -- An empty case is not allowed. Accepting it here allows us to provide
     -- better error messages.
-    '{' '}' { emptyCaseMap }
+    '{' '}'                            { ($1 `runion` $2) @- emptyCaseMap }
   | -- optional nl: The closing brace may be on column 0 of a new line. Usually
     -- nl separates declarations.
-    '{' CaseMap opt(',') opt(nl) '}' { $2 }
+    '{' CaseMap opt(',') opt(nl) '}'   { ($1 `runion` $5) @- $2 }
 
 CaseMap :: { PCaseMap }
   : Case             {% $1 emptyCaseMap }
@@ -483,8 +494,8 @@ Case :: { PCaseMap -> Parser PCaseMap }
   : Pattern '->' Exp { \pcm -> do
       let (con, binds) = $1
       let branch = CaseBranch
-            { branchPos = needPos con
-            , branchBinds = fmap needPLoc binds
+            { branchRange = con `runion` $3
+            , branchBinds = binds
             , branchExp = $3
             }
       cases <- insertNoDuplicates (unL con) branch (E.casesPatterns pcm)
@@ -492,8 +503,8 @@ Case :: { PCaseMap -> Parser PCaseMap }
     }
   | ProgVarWild '->' Exp { \pcm -> do
       let wildBranch = CaseBranch
-            { branchPos = needPos $1
-            , branchBinds = Identity (needPLoc $1)
+            { branchRange = $1 `runion` $3
+            , branchBinds = Identity $1
             , branchExp = $3
             }
       whenJust (E.casesWildcard pcm) \prevWild ->
@@ -526,8 +537,8 @@ Op :: { Located (ProgVar PStage) }
   | '^'       { $1 @- UnqualifiedName (Unqualified "(^)") }
 
 OpTys :: { PExp }
-  : Op                      { Pos.uncurryL E.Var (needPLoc $1) }
-  | OpTys '[' TypeApps ']'  { E.foldTypeApps (const needPos) $1 $3 }
+  : Op                      { uncurryL E.Var $1 }
+  | OpTys '[' TypeApps ']'  { E.foldTypeApps (\_ _ -> $1 `runion` $4) $1 $3 }
 
 OpsExp :: { OperatorSequence HeadE Parse PExp }
   : EApp OpTys              { opsRightSection $1 $2 }
@@ -545,11 +556,11 @@ polarised(t)
   | '+' polarised(t)   { $2 }
   | '-' polarised(t)   { T.Negate ($1 `runion` $2) $2 :: PType }
 
-ConSequence1 :: { NameMap Values Pos }
-  : Constructor                   { Map.singleton (unL $1) (needPos $1) }
-  | ConSequence1 ',' Constructor  { Map.insert (unL $3) (needPos $3) $1 }
+ConSequence1 :: { NameMap Values SrcRange }
+  : Constructor                   { Map.singleton (unL $1) (getRange $1) }
+  | ConSequence1 ',' Constructor  { Map.insert (unL $3) (getRange $3) $1 }
 
-ConSequence :: { NameMap Values Pos }
+ConSequence :: { NameMap Values SrcRange }
   : {- empty -}                   { Map.empty }
   | ConSequence1                  { $1 }
   | ConSequence1 ','              { $1 }

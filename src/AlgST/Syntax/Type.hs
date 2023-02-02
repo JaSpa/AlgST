@@ -144,8 +144,6 @@ data Type x
 
 deriving stock instance (ForallX Lift x) => Lift (Type x)
 
-deriving via Generically (Type x) instance (ForallX HasPos x) => HasPos (Type x)
-
 deriving via Generically (Type x) instance (ForallX HasRange x) => HasRange (Type x)
 
 instance (ForallX StoresRange x) => StoresRange (Type x) where
@@ -153,7 +151,7 @@ instance (ForallX StoresRange x) => StoresRange (Type x) where
 
 data ProtocolSubset stage = ProtocolSubset
   { subsetComplement :: !Bool,
-    subsetConstructors :: !(NameMapG stage Values Pos)
+    subsetConstructors :: !(NameMapG stage Values SrcRange)
   }
   deriving stock (Generic)
 

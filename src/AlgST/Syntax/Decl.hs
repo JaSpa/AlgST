@@ -16,7 +16,7 @@ module AlgST.Syntax.Decl where
 import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Name
-import AlgST.Syntax.Phases hiding (Located)
+import AlgST.Syntax.Phases
 import AlgST.Syntax.Type qualified as T
 import AlgST.Util.SourceLocation as R
 import Data.Bitraversable
