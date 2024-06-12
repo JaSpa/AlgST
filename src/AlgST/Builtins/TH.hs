@@ -31,7 +31,7 @@ parseTH modName baseMap srcLines = Code.do
   let mgr = singletonManager srcBuffer
 
   -- Run the parser.
-  parsed <- case runParser (bufferContents srcBuffer) parseModule of
+  parsed <- case runParser parseModule (bufferContents srcBuffer) of
     Left errs -> do
       reportDiagnostics mgr errs
       pure emptyParsedModule

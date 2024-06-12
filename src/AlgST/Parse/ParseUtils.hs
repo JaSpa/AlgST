@@ -683,9 +683,9 @@ scanTokenImpl input nlp = LexFn \k -> case alexScan input 0 of
           -- Call the continuation with the resulting token.
           unParser (k t)
 
-runParser :: ByteString -> Parser a -> Either D.Errors a
-runParser input =
-  unParser
-    >>> flip runReaderT (NLSkipFollowing, scanTokenImpl input)
-    >>> runValidate
-    >>> first DNE.toNonEmpty
+runParser :: Parser a -> ByteString -> Either D.Errors a
+runParser p input =
+  unParser p
+    & flip runReaderT (NLSkipFollowing, scanTokenImpl input)
+    & runValidate
+    & first DNE.toNonEmpty
