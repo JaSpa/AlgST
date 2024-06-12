@@ -4,16 +4,15 @@
 {-# LANGUAGE ViewPatterns #-}
 
 -- | This module defines a datatype @'OncePair' a b@ isomorphic to @(a,b)@.
--- /Only use 'OncePair' if you every only evaluate one component./ In such a
--- use case usage of 'OncePair' can lead to decreased allocation compared to
--- ordinary pairs.
+-- @'OncePair' a b@ is optimised for the case that in each branch at most one
+-- component is evaluated.
 --
 -- When constructing values of this type the compiler understands that only one
--- component will be forced. It can reduce allocation by not sharing
+-- component will be evaluated. It can reduce allocations by not sharing
 -- subcomputations between the two branches. Instead all subcomputations are
 -- inlined into the branches. Therefore, if against all advice both components
 -- of a 'OncePair' are evaluated some computations which would otherwise be
--- shared may be repeated.
+-- shared will have to be recomputed.
 module AlgST.Util.OncePair
   ( OncePair ((:|:)),
     onceFst,
