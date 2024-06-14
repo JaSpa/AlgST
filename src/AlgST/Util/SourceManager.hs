@@ -11,6 +11,9 @@ module AlgST.Util.SourceManager
     emptyBuffer,
     encodedBuffer,
     decodeBuffer,
+    readFile,
+    readStdin,
+    readHandle,
 
     -- * Handling multiple buffers
     SourceManager,
@@ -50,6 +53,7 @@ import Foreign
 import GHC.Foreign qualified as GHC
 import System.IO qualified as IO
 import System.IO.Unsafe (unsafePerformIO)
+import Prelude hiding (readFile)
 
 newtype SourceManager
   = -- | A @SourceManager@ consists of a list of buffers ordered by their base
@@ -79,7 +83,7 @@ instance HasRange Buffer where
 emptyBuffer :: FilePath -> Buffer
 emptyBuffer name = Buffer {bufferName = name, bufferContents = BS.empty}
 
--- | UTF-8 encodes the 'String' and stores it in 'bufferContents'.
+-- | Creates a 'Buffer' with the given name and the 'String' as the 'bufferContents'.
 encodedBuffer :: FilePath -> String -> Buffer
 encodedBuffer name contents =
   Buffer
@@ -92,6 +96,32 @@ encodedBuffer name contents =
 decodeBuffer :: Buffer -> String
 decodeBuffer b = unsafePerformIO do
   BS.unsafeUseAsCStringLen (bufferContents b) (GHC.peekCStringLen IO.utf8)
+
+-- | Reads the contents of the given path into a 'Buffer'.
+--
+-- The file is assumed to contain valid UTF-8.
+readFile :: FilePath -> IO Buffer
+readFile fp = do
+  contents <- BS.readFile fp
+  pure Buffer {bufferName = fp, bufferContents = contents}
+
+-- | Reads the contents of the given 'IO.Handle' into a 'Buffer'. The
+-- 'FilePath' is only used as the buffer's name 'bufferName'.
+--
+-- This function takes precautions to honour the handle's encoding. The
+-- contents are first read into a 'T.Text' which is then encoded into UTF-8
+-- encoded 'ByteString'.
+--
+-- TODO: In cases the handle is already in UTF-8 mode (or any UTF-8 compatible
+-- mode, eg. ASCII) this function should avoid roundtripping through 'T.Text'.
+readHandle :: FilePath -> IO.Handle -> IO Buffer
+readHandle fp h = do
+  contents <- TIO.hGetContents h
+  pure Buffer {bufferName = fp, bufferContents = TE.encodeUtf8 contents}
+
+-- | @readStdin fp = 'readHandle' fp 'IO.stdin'@.
+readStdin :: FilePath -> IO Buffer
+readStdin fp = readHandle fp IO.stdin
 
 -- | Finds the buffer containing the given 'SrcLoc'. It returns the buffer's
 -- name and the contents split into the part before the 'SrcLoc' and the part
@@ -165,38 +195,29 @@ managedBuffers :: SourceManager -> Seq Buffer
 managedBuffers (SourceManager bs) = bs
 
 insertBuffer :: Buffer -> SourceManager -> SourceManager
-insertBuffer b (SourceManager bufList) = do
+insertBuffer !b (SourceManager bufList) = do
   let (xs, ys) = splitBufList (getStartLoc b) bufList
   SourceManager (xs <> Seq.singleton b <> ys)
 
+-- | Convenience function that combines 'readStdin' and 'insertBuffer'.
 insertStdin :: String -> SourceManager -> IO (Buffer, SourceManager)
-insertStdin name = insertBufferIO name do
-  -- We read STDIN first into a text before encoding it back into a ByteString.
-  -- The reason is that we cannot be sure that STDIN is UTF-8 encoded. While it
-  -- is reasonable to expect that from files, STDIN encoding depends on the
-  -- system, the used terminal, etc.
-  --
-  -- TODO: Inspect STDIN's encoding and locale settings and read it directly
-  -- into a bytestring if possible.
-  contents <- TIO.getContents
-  pure $ TE.encodeUtf8 contents
+insertStdin = insertBufferIO . readStdin
 
--- | Reads the file at the given path. It is assumed to contain valid UTF-8
--- encoded data.
+-- | Convenience function that combines 'readFile' and 'insertBuffer'.
 insertFile :: FilePath -> SourceManager -> IO (Buffer, SourceManager)
-insertFile fp = insertBufferIO fp (BS.readFile fp)
+insertFile = insertBufferIO . readFile
 
-insertBufferIO :: FilePath -> IO ByteString -> SourceManager -> IO (Buffer, SourceManager)
-insertBufferIO name readContents manager = do
-  !b <- Buffer name <$> readContents
+insertBufferIO :: IO Buffer -> SourceManager -> IO (Buffer, SourceManager)
+insertBufferIO bufM manager = do
+  !b <- bufM
   let !manager' = insertBuffer b manager
   pure (b, manager')
 
 splitBufList :: SrcLoc -> Seq Buffer -> (Seq Buffer, Seq Buffer)
 splitBufList !loc = lowerBound \b -> getStartLoc b < loc
 
--- | Splits a 'Seq' according to some predicate. It assumes that the sequence
--- is sorted according to the predicate.
+-- | Splits a 'Seq' according to some predicate /P/. It assumes that the sequence
+-- is sorted according to /P/.
 lowerBound :: (a -> Bool) -> Seq a -> (Seq a, Seq a)
 lowerBound lt as0 = go (length as0) mempty as0 mempty
   where
@@ -207,12 +228,12 @@ lowerBound lt as0 = go (length as0) mempty as0 mempty
       let (xs, yys) = Seq.splitAt step as
       -- Check on which side of the split that element lies.
       if
-          | y :<| ys <- yys,
-            lt y ->
-              -- `y` is less than the the element we are looking for.
-              -- Continue into `ys`.
-              go (n - step - 1) (leftCtxt <> xs :|> y) ys rightCtxt
-          | otherwise ->
-              -- `y` lies on the right of the split.
-              -- Continue into `xs`.
-              go step leftCtxt xs (yys <> rightCtxt)
+        | y :<| ys <- yys,
+          lt y ->
+            -- `y` is less than the the element we are looking for.
+            -- Continue into `ys`.
+            go (n - step - 1) (leftCtxt <> xs :|> y) ys rightCtxt
+        | otherwise ->
+            -- `y` lies on the right of the split.
+            -- Continue into `xs`.
+            go step leftCtxt xs (yys <> rightCtxt)

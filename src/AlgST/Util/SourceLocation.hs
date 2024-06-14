@@ -82,6 +82,16 @@ import Lens.Family2.Unchecked (lens)
 import System.IO qualified as IO
 import System.IO.Unsafe
 
+-- FIXME: `SrcLoc` and `SrcRange` should not have a `Ord` instances.
+--
+-- The ordering of locations, which are just pointers to somewhere in the heap,
+-- between different files is basically random (although consistent during a
+-- single run).
+--
+-- By having the ordering of diagnostics depend on the ordering of the files in
+-- memory we cannot guarantee that the same input files result in the same
+-- output for every invocation.
+
 newtype SrcLoc = SrcLoc {locPtr :: Ptr Word8}
   deriving newtype (Eq, Ord, Hashable)
 
@@ -199,7 +209,7 @@ class HasRange a where
   getEndLoc :: a -> SrcLoc
   getEndLoc (getRange -> SrcRange _ x) = x
 
-class HasRange a => StoresRange a where
+class (HasRange a) => StoresRange a where
   rangeL :: Lens' a SrcRange
 
 instance HasRange SrcRange where
@@ -245,29 +255,29 @@ instance (GHasRange f, GHasRange g) => GHasRange (f :+: g) where
   getRangeRep (L1 f) = getRangeRep f
   getRangeRep (R1 g) = getRangeRep g
 
-instance GHasRange f => GHasRange (f :*: g) where
+instance (GHasRange f) => GHasRange (f :*: g) where
   getRangeRep (f :*: _) = getRangeRep f
 
-instance GHasRange f => GHasRange (M1 i c f) where
+instance (GHasRange f) => GHasRange (M1 i c f) where
   getRangeRep (M1 f) = getRangeRep f
 
-instance HasRange c => GHasRange (K1 i c) where
+instance (HasRange c) => GHasRange (K1 i c) where
   getRangeRep (K1 c) = getRange c
 
-class GHasRange f => GStoresRange f where
+class (GHasRange f) => GStoresRange f where
   updateRangeRep :: f a -> SrcRange -> f a
 
 instance (GStoresRange f, GStoresRange g) => GStoresRange (f :+: g) where
   updateRangeRep (L1 f) = L1 . updateRangeRep f
   updateRangeRep (R1 g) = R1 . updateRangeRep g
 
-instance GStoresRange f => GStoresRange (f :*: g) where
+instance (GStoresRange f) => GStoresRange (f :*: g) where
   updateRangeRep (f :*: g) = (:*: g) . updateRangeRep f
 
-instance GStoresRange f => GStoresRange (M1 i c f) where
+instance (GStoresRange f) => GStoresRange (M1 i c f) where
   updateRangeRep (M1 f) = M1 . updateRangeRep f
 
-instance StoresRange c => GStoresRange (K1 i c) where
+instance (StoresRange c) => GStoresRange (K1 i c) where
   updateRangeRep (K1 c) r = K1 $ c & rangeL .~ r
 
 -- | Attaches a position to a value of type @a@.
@@ -300,21 +310,21 @@ uncurryL f (p :@ a) = f p a
 onUnL :: (a -> a -> b) -> Located a -> Located a -> b
 onUnL f (_ :@ x) (_ :@ y) = f x y
 
-(@-) :: HasRange p => p -> a -> Located a
+(@-) :: (HasRange p) => p -> a -> Located a
 p @- a = getRange p :@ a
 
-needPos :: HasCallStack => a -> P.Pos
+needPos :: (HasCallStack) => a -> P.Pos
 needPos = undefined
 {-# WARNING needPos "compat placeholder" #-}
 
-needRange :: HasCallStack => a -> SrcRange
+needRange :: (HasCallStack) => a -> SrcRange
 needRange = undefined
 {-# DEPRECATED needRange "compat placeholder" #-}
 
-needLoc :: HasCallStack => P.Located a -> Located a
+needLoc :: (HasCallStack) => P.Located a -> Located a
 needLoc = undefined
 {-# DEPRECATED needLoc "compat placeholder" #-}
 
-needPLoc :: HasCallStack => Located a -> P.Located a
+needPLoc :: (HasCallStack) => Located a -> P.Located a
 needPLoc = undefined
 {-# DEPRECATED needPLoc "compat placeholder" #-}

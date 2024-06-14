@@ -50,10 +50,10 @@ import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Module
 import AlgST.Syntax.Name
-import AlgST.Syntax.Pos
 import AlgST.Typing.Phase (Tc, TcBind, TcExp, TcExpX (..), TcModule, TcStage)
 import AlgST.Util.Lenses
 import AlgST.Util.Output
+import AlgST.Util.SourceLocation
 import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Concurrent.STM
@@ -151,7 +151,7 @@ newtype EvalM a = EvalM {unEvalM :: ReaderT EvalInfo (StateT ForkCounter IO) a}
 runEvalM :: EvalInfo -> EvalM a -> IO a
 runEvalM info (EvalM m) = fst <$> runStateT (runReaderT m info) (ForkCounter 0)
 
-data InterpretError = InterpretError !CallStack !Pos String
+data InterpretError = InterpretError !CallStack !SrcRange String
 
 instance Show InterpretError where
   -- Ideally we would derive 'Show' (display the representation) and keep
@@ -164,14 +164,14 @@ instance Show InterpretError where
 instance Exception InterpretError where
   displayException (InterpretError cs p e) =
     concat
-      [ if p == ZeroPos then "" else shows p ":",
+      [ if p == NullRange then "" else shows p ":",
         "interpret error: ",
         e,
         "\n\n",
         prettyCallStack cs
       ]
 
-failInterpet :: (HasCallStack) => Pos -> String -> EvalM a
+failInterpet :: (HasCallStack) => SrcRange -> String -> EvalM a
 failInterpet !p = liftIO . throwIO . InterpretError callStack p
 
 newtype ChannelId = ChannelId Word
@@ -484,7 +484,7 @@ evalLiteral = \case
 
 -- | Evaluates the named top-level expression.
 evalName :: (HasCallStack) => Name Resolved Values -> EvalM Value
-evalName = lookupEnv ZeroPos
+evalName = lookupEnv NullRange
 
 -- | Evaluates the given expression.
 eval :: TcExp -> EvalM Value
@@ -586,8 +586,8 @@ eval =
     --
     E.Exp (RecvCase p e cases) -> do
       chanVal <- eval e
-      channel <- unwrap (pos e) TChannel chanVal
-      l <- unwrap ZeroPos TLabel =<< readChannel channel
+      channel <- unwrap (getRange e) TChannel chanVal
+      l <- unwrap NullRange TLabel =<< readChannel channel
       b <-
         E.casesPatterns cases
           & Map.lookup l
@@ -717,7 +717,7 @@ localBinds binds = localEnv \e -> Right `fmap` Map.fromList binds <> e
 
 -- | Looks for the given variable in the current environment. If it resovles to
 -- a top-level expression it will be evaluated before returning.
-lookupEnv :: (HasCallStack) => Pos -> ProgVar TcStage -> EvalM Value
+lookupEnv :: (HasCallStack) => SrcRange -> ProgVar TcStage -> EvalM Value
 lookupEnv p v =
   askEnv
     >>= maybe (failInterpet p err) pure . Map.lookup v
@@ -727,11 +727,11 @@ lookupEnv p v =
 
 -- | Evaluates the given expression and extracts the expected type.
 evalAs :: Type a -> TcExp -> EvalM a
-evalAs ty e = eval e >>= unwrap (pos e) ty
+evalAs ty e = eval e >>= unwrap (getRange e) ty
 
 -- | Tries to extract the payload of the given type from a value. If the value
 -- has a different type an 'InterpretError' will be thrown.
-unwrap :: Pos -> Type a -> Value -> EvalM a
+unwrap :: SrcRange -> Type a -> Value -> EvalM a
 unwrap _ TNumber (Number n) = pure n
 unwrap _ TString (String s) = pure s
 unwrap _ TChar (Char c) = pure c
@@ -756,7 +756,7 @@ unwrap p ty v =
       TChar -> "a char"
       TClosure -> "a closure"
 
-unmatchableConstructor :: Pos -> ProgVar TcStage -> EvalM a
+unmatchableConstructor :: SrcRange -> ProgVar TcStage -> EvalM a
 unmatchableConstructor p c = failInterpet p $ "unmatchable constructor " ++ pprName c
 {-# NOINLINE unmatchableConstructor #-}
 

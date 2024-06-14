@@ -182,7 +182,7 @@ sectionsParenthesized (InParens r) ops = do
   let extendRange = if isSection ops then id else rangeL %~ (<> r)
   pure $ E.Exp $ Right $ SomeOperatorSequence $ extendRange ops
 
-errorMissingOperand :: HasRange o => Maybe SrcRange -> o -> D.Diagnostic
+errorMissingOperand :: (HasRange o) => Maybe SrcRange -> o -> D.Diagnostic
 errorMissingOperand sectionRange op =
   D.err (getRange op) "missing operand" "this operator is missing an operand"
     & maybe id sectionFix sectionRange

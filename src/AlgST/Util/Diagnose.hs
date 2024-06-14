@@ -22,6 +22,7 @@ module AlgST.Util.Diagnose
     hint,
 
     -- * Rendering
+    BaseDiagnostic,
 
     -- ** Creating the @diagnose@ representation
     buildSorted,
@@ -63,6 +64,13 @@ type Errors = NonEmpty Diagnostic
 -- | Difference-version of 'Errors'. Prefer this when accumulating
 -- 'Diagnostic's in a monoidal context.
 type DErrors = DNonEmpty Diagnostic
+
+-- | 'Diagnostic's are combined into a @"Error.Diagnose".'E.Diagnostic'
+-- String@, aka 'BaseDiagnostic', using 'addSorted' or 'buildSorted'.
+--
+-- 'BaseDiagnostic's can the be rendered using the functions from
+-- "Error.Diagnose".
+type BaseDiagnostic = E.Diagnostic String
 
 type MonadErrors = MonadValidate DErrors
 
@@ -109,7 +117,7 @@ pushMarker range marker (Diagnostic r build) = Diagnostic r $ oneShot \(!di) -> 
 rangeToPosition :: DiagInfo -> SrcRange -> E.Position
 rangeToPosition = diagnoseSrcRange . diManager
 
--- | Turns a list of 'Diagnostic's into a @"Error.Diagnose".'E.Diagnostic'@.
+-- | Turns a list of 'Diagnostic's into a 'BaseDiagnostic'.
 --
 -- All files known to the given 'SourceManager' are automatically added. If you
 -- need to build\/render multiple diagnostics with the same 'SourceManager' it
@@ -117,10 +125,10 @@ rangeToPosition = diagnoseSrcRange . diManager
 -- 'addSorted'.
 --
 -- The given diagnostics are sorted based on their main 'SrcRange'.
-buildSorted :: SourceManager -> [Diagnostic] -> E.Diagnostic String
+buildSorted :: SourceManager -> [Diagnostic] -> BaseDiagnostic
 buildSorted mgr diags = addSorted mgr diags (onlyFiles mgr)
 
--- | Adds a list of diagnostics to a @"Error.Diagnose".'E.Diagnostic'@.
+-- | Adds a list of diagnostics to a 'BaseDiagnostic'.
 --
 -- The files referenced by the diagnostics have to be added in an additional
 -- step, or preferably already exist in the given diagnostic.
@@ -130,7 +138,7 @@ buildSorted mgr diags = addSorted mgr diags (onlyFiles mgr)
 -- diagnostics already added. Calling this function twice will always add the
 -- second set of diagnostics after the first set.
 addSorted ::
-  SourceManager -> [Diagnostic] -> E.Diagnostic String -> E.Diagnostic String
+  SourceManager -> [Diagnostic] -> BaseDiagnostic -> BaseDiagnostic
 addSorted mgr diags d0 = foldr insert d0 sortedReverse
   where
     info =
@@ -150,13 +158,13 @@ addSorted mgr diags d0 = foldr insert d0 sortedReverse
       -- decorate-sort-undecorate pattern.
       List.sortBy (comparing (Down . getRange)) diags
 
--- | Creates a @"Error.Diagnose".'E.Diagnostic'@ without any 'E.Report's but
--- only the set of all files added to be referenced in reports.
+-- | Creates a 'BaseDiagnostic' without any 'E.Report's but only the set of all
+-- files added to be referenced in reports.
 onlyFiles :: SourceManager -> E.Diagnostic msg
 onlyFiles = foldl' (flip addBuffer) mempty . managedBuffers
 
--- | Adds a 'Buffer' to a @"Error.Diagnose".'E.Diagnostic'@ as a file to be
--- referenced in a 'E.Report'.
+-- | Adds a 'Buffer' to a 'BaseDiagnostic' as a file to be referenced in a
+-- 'E.Report'.
 addBuffer :: Buffer -> E.Diagnostic msg -> E.Diagnostic msg
 addBuffer buf diag = E.addFile diag (bufferName buf) (decodeBuffer buf)
 

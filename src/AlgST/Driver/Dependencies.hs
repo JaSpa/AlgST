@@ -1,6 +1,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE PatternSynonyms #-}
@@ -33,7 +34,7 @@ module AlgST.Driver.Dependencies
 where
 
 import AlgST.Syntax.Name
-import AlgST.Syntax.Pos
+import AlgST.Util.SourceLocation
 import Algebra.Graph.AdjacencyMap qualified as G
 import Algebra.Graph.AdjacencyMap.Algorithm qualified as G
 import Control.Category ((>>>))
@@ -53,19 +54,19 @@ import Data.Ord
 import Data.Semigroup
 import Data.Set qualified as Set
 import Data.Traversable
+import GHC.Generics (Generic)
 
-newtype ImportLocation = ImportLocation (Located FilePath)
+newtype ImportLocation = ImportLocation (Located FilePath) -- TODO: check if the file path is actually still needed
+  deriving stock (Generic)
+  deriving (HasRange) via Generically ImportLocation
 
 instance Show ImportLocation where
   show (ImportLocation (p :@ fp))
     | null fp = "???:" ++ show p
     | otherwise = fp ++ ':' : show p
 
-instance HasPos ImportLocation where
-  pos (ImportLocation iloc) = pos iloc
-
--- | Two 'ImportLocation' values are considered equal if their contained 'Pos'
--- values are equal.
+-- | Two 'ImportLocation' values are considered equal if their contained
+-- 'SrcRange' values are equal.
 --
 -- The stored 'FilePath' is not considered. this is mostly a slight
 -- optimization since all edge labels from a module should originate from the
@@ -75,7 +76,7 @@ instance Eq ImportLocation where
 
 -- | See 'Eq' instance.
 instance Ord ImportLocation where
-  compare = comparing pos
+  compare = comparing getRange
 
 instance Semigroup ImportLocation where
   a <> b = mconcat [a, b]
@@ -83,7 +84,7 @@ instance Semigroup ImportLocation where
   stimes = stimesIdempotentMonoid
 
 instance Monoid ImportLocation where
-  mempty = ImportLocation $ ZeroPos @- ""
+  mempty = ImportLocation $ NullRange @- ""
   mconcat = filter (/= mempty) >>> nonEmpty >>> foldMap minimum
 
 importLocPath :: ImportLocation -> FilePath
@@ -236,7 +237,7 @@ data TraverseState a = TraverseState !Int [a]
 -- implementation requirements.
 traverseTreePar ::
   forall a b m.
-  MonadUnliftIO m =>
+  (MonadUnliftIO m) =>
   Comp ->
   DepsTree a ->
   ([(DepVertex, b)] -> DepVertex -> Maybe a -> m b) ->
@@ -261,22 +262,22 @@ traverseTreePar strat dg op =
       let vertexAction :: DepVertex -> Set.Set dep -> IO (DepVertex -> b -> IO ())
           vertexAction a deps
             | Set.null deps = do
-              scheduleWork s $ runOp [] a
-              pure \_ _ -> superflousInput
+                scheduleWork s $ runOp [] a
+                pure \_ _ -> superflousInput
             | otherwise = do
-              r <- newIORef $ Just $ TraverseState (Set.size deps) []
-              pure \v b -> do
-                bs <- atomicModifyIORef' r \case
-                  Nothing ->
-                    (Nothing, Nothing)
-                  Just (TraverseState 1 bs) ->
-                    (Nothing, Just ((v, b) : bs))
-                  Just (TraverseState n bs) ->
-                    (Just $! TraverseState (n - 1) ((v, b) : bs), Just [])
-                case bs of
-                  Just [] -> pure ()
-                  Just bs -> scheduleWork s $ runOp bs a
-                  Nothing -> superflousInput
+                r <- newIORef $ Just $ TraverseState (Set.size deps) []
+                pure \v b -> do
+                  bs <- atomicModifyIORef' r \case
+                    Nothing ->
+                      (Nothing, Nothing)
+                    Just (TraverseState 1 bs) ->
+                      (Nothing, Just ((v, b) : bs))
+                    Just (TraverseState n bs) ->
+                      (Just $! TraverseState (n - 1) ((v, b) : bs), Just [])
+                  case bs of
+                    Just [] -> pure ()
+                    Just bs -> scheduleWork s $ runOp bs a
+                    Nothing -> superflousInput
       actions <-
         dgVerticesToDeps dg
           & G.adjacencyMap
@@ -290,7 +291,7 @@ traverseTreePar strat dg op =
       _ -> strat
 
 traverseVerticesPar ::
-  MonadUnliftIO m =>
+  (MonadUnliftIO m) =>
   Comp ->
   (DepVertex -> a -> m b) ->
   DepsGraph cycles a ->
@@ -326,15 +327,15 @@ exportTextual dg =
       showString (padString maxlen v)
     go v deps
       | Set.null deps =
-        Endo $ showString (unModuleName v) . showChar '\n'
+          Endo $ showString (unModuleName v) . showChar '\n'
       | otherwise = fold do
-        let edge d =
-              padded v . showString "--> " . padded d
-        let renderIloc d =
-              showString $ maybe "???" show $ HM.lookup (v `DependsOn` d) (dgEdges dg)
-        let render d =
-              edge d . showString " [" . renderIloc d . showString "]\n"
-        [Endo $ render d | d <- Set.toList deps]
+          let edge d =
+                padded v . showString "--> " . padded d
+          let renderIloc d =
+                showString $ maybe "???" show $ HM.lookup (v `DependsOn` d) (dgEdges dg)
+          let render d =
+                edge d . showString " [" . renderIloc d . showString "]\n"
+          [Endo $ render d | d <- Set.toList deps]
 
 padString :: Int -> String -> String
 padString n s = take n $ s ++ repeat ' '
