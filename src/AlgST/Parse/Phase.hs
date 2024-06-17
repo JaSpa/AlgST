@@ -1,7 +1,7 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveLift #-}
-{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -31,6 +31,7 @@ data ParsedBuiltin
   | BuiltinFork SrcRange
   | BuiltinFork_ SrcRange
   deriving stock (Lift)
+  deriving (Show) via ShowUnparse ParsedBuiltin
 
 instance HasRange ParsedBuiltin where
   getRange (BuiltinNew p) = p

@@ -38,6 +38,7 @@ dependencies:
 - mtl
 - optparse-applicative
 - prettyprinter
+- prettyprinter-ansi-terminal
 - profunctors
 - scheduler
 - semialign

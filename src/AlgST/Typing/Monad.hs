@@ -12,15 +12,14 @@ import AlgST.Syntax.Decl
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Module
 import AlgST.Syntax.Name
-import AlgST.Syntax.Pos
 import AlgST.Typing.Phase
-import AlgST.Util.ErrorMessage (Diagnostic)
+import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.Lenses
+import AlgST.Util.SourceLocation
 import Control.Monad.Eta
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Validate
-import Data.DList.DNonEmpty (DNonEmpty)
 import Data.Map qualified as Map
 import Data.Sequence (Seq)
 import Data.These
@@ -30,13 +29,13 @@ import Lens.Family2
 -- | A @Var@ tracks a 'ProgVar's type, declaration location and usage
 -- information.
 data Var = Var
-  { varType :: TcType,
+  { varType :: !TcType,
     varUsage :: !Usage,
-    varLocation :: Pos
+    varLocation :: !SrcRange
   }
 
-instance HasPos Var where
-  pos = varLocation
+instance HasRange Var where
+  getRange = varLocation
 
 data Usage
   = -- | Usage for 'Un' variables is not tracked.
@@ -44,14 +43,28 @@ data Usage
   | -- | An unused 'Lin' variable.
     LinUnunsed
   | -- | A used 'Lin' variable, associated with the usage location.
-    LinUsed Pos
+    LinUsed SrcRange
 
+-- | Describes the various kinds of (pseudo) type constructors.
+--
+-- During type checking, all proper type constructors are mapped to
+-- 'NominalTypeCon' and all type aliases are, initially, mapped to 'LazyAlias'.
+-- When type alias resultion happens the mapping will be updated first to
+-- 'ExpandingAlias' and then to either 'ResolvedAlias' or 'CyclicAlias'.
 data TypeCon
-  = NominalTypeCon !(Params Resolved) !K.Kind !(TcNameSet Values)
-  | ResolvedAlias !(TypeAlias Tc) !K.Kind
-  | LazyAlias !Pos !(TypeAlias Rn)
-  | ExpandingAlias !Int
-  | CyclicAlias RecursiveSets
+  = -- | A constructor for a nominal type. There is a sequence of parameters,
+    -- a resulting 'K.Kind', and a set of constructor names.
+    NominalTypeCon !(Params Resolved) !K.Kind !(TcNameSet Values)
+  | -- | A resolved type alias annotated with the actual infered 'K.Kind'.
+    ResolvedAlias !(TypeAlias Tc) !K.Kind
+  | -- | An unresolved type alias annotated with the range of the definition's
+    -- LHS and the definitions RHS.
+    LazyAlias !SrcRange !(TypeAlias Rn)
+  | -- | An alias that is being expanded. The 'Int' is the index in the
+    -- 'tcExpansionStack' were the expansion began.
+    ExpandingAlias !Int
+  | -- | A type alias that was discovered to be cyclic.
+    CyclicAlias RecursiveSets
   deriving stock (Lift)
 
 type TypeEnv = TcNameMap Values Var
@@ -103,6 +116,11 @@ data TySt = TySt
     tcTypeEnv :: !TypeEnv
   }
 
+-- | @RecursiveSets@ is a mapping from @'TcNameSet' 'Types'@ to
+-- @['ExpansionEntry']@.
+--
+-- The mapping is non-empty. This is achieved by replicating one pair in the
+-- mapping in the first two constructor elements.
 data RecursiveSets
   = RecursiveSets
       (TcNameSet Types)
@@ -118,10 +136,15 @@ type TypeM = TcM TyTypingEnv TySt
 
 type TcM env st = ValidateT Errors (StateT st (ReaderT env Fresh))
 
-type Errors = These (DNonEmpty Diagnostic) RecursiveSets
+type Errors = These D.DErrors RecursiveSets
 
+-- | An entry in the current stack of type alias expansions.
+--
+-- The very bottom element of the stack will not have a meaningfull
+-- 'expansionUseRange'.
 data ExpansionEntry = ExpansionEntry
-  { expansionLoc :: !Pos,
+  { expansionUseRange :: !SrcRange,
+    expansionDefRange :: !SrcRange,
     expansionName :: !(NameR Types),
     expansionAlias :: !(TypeAlias Rn)
   }

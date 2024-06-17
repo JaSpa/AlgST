@@ -1,525 +1,426 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE ViewPatterns #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 
 module AlgST.Typing.Error where
 
+import AlgST.Parse.Phase qualified as P
 import AlgST.Rename
-import AlgST.Syntax.Decl
 import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Name
-import AlgST.Syntax.Pos
 import AlgST.Syntax.Type qualified as T
 import AlgST.Typing.Align
 import AlgST.Typing.Monad
 import AlgST.Typing.Phase
 import AlgST.Util
+import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.ErrorMessage hiding (Errors)
-import AlgST.Util.SourceLocation (HasRange, needPLoc, needPos, needRange)
+import AlgST.Util.Generically
+import AlgST.Util.Operators
+import AlgST.Util.SourceLocation
+import Control.Category ((>>>))
 import Control.Monad.Validate
 import Data.DList.DNonEmpty qualified as DNE
-import Data.List qualified as List
-import Data.List.NonEmpty (NonEmpty, nonEmpty)
-import Data.List.NonEmpty qualified as NE
+import Data.Function
+import Data.List.NonEmpty (NonEmpty (..), nonEmpty)
+import Data.Semigroup
 import Data.Singletons
 import Data.These
 import Data.Void
 import Prelude hiding (truncate)
 
-add :: MonadValidate Errors m => Diagnostic -> m ()
+add :: (MonadValidate Errors m) => D.Diagnostic -> m ()
 add !e = dispute $ This $ DNE.singleton e
 
 -- | Records multiple errors. If the error list is acutally empty, no errors
 -- will be recorded and the computation won't fail.
-adds :: MonadValidate Errors m => [Diagnostic] -> m ()
+adds :: (MonadValidate Errors m) => [D.Diagnostic] -> m ()
 adds = maybe (pure ()) (dispute . This . DNE.fromNonEmpty) . nonEmpty
 
-fatal :: MonadValidate Errors m => Diagnostic -> m a
+fatal :: (MonadValidate Errors m) => D.Diagnostic -> m a
 fatal !e = refute $ This $ DNE.singleton e
 
-ifNothing :: MonadValidate Errors m => Diagnostic -> Maybe a -> m a
+ifNothing :: (MonadValidate Errors m) => D.Diagnostic -> Maybe a -> m a
 ifNothing e = maybe (fatal e) pure
 
-unexpectedKind ::
-  (T.ForallX HasRange x) =>
-  T.Type x ->
-  K.Kind ->
-  [K.Kind] ->
-  Diagnostic
-unexpectedKind t kind hintKinds = PosError (needPos t) (message ++ hint)
+toNewDiagnostic :: Diagnostic -> D.Diagnostic
+toNewDiagnostic = error "toNewDiagnostic"
+
+unexpectedKind :: (T.ForallX HasRange x) => T.Type x -> K.Kind -> [K.Kind] -> D.Diagnostic
+unexpectedKind t kind hintKinds =
+  D.err "kind mismatch"
+    & D.primary (getRange t) ("type has kind" <+> D.showSyntax kind)
+    & addHint
   where
-    message =
-      [ Error "Unexpected kind",
-        Error kind,
-        Error "for type",
-        Error "‹‹show t››"
-      ]
-    hint = case nonEmpty hintKinds of
-      Just hints ->
-        [ErrLine, Error $ "Expected a subkind of " ++ joinOr (show <$> hints)]
-      Nothing ->
-        []
+    addHint = case nonEmpty hintKinds of
+      Just hints -> D.hint do
+        "Expected a subkind of"
+          <+> D.joinOr (D.showSyntax <$> hints)
+          <> "."
+      Nothing -> id
 {-# NOINLINE unexpectedKind #-}
 
-unexpectedForkKind :: String -> RnExp -> TcType -> K.Kind -> K.Kind -> Diagnostic
-unexpectedForkKind forkKind e ty kiActual kiExpected =
-  PosError (needPos e) $
-    errUnline
-      [ [Error $ "Forked expression (" ++ forkKind ++ ")"],
-        [indent, Error e],
-        [Error "has type"],
-        showType ty Nothing,
-        [ Error "which has kind",
-          Error kiActual,
-          Error "but should have kind",
-          Error kiExpected
+unexpectedForkKind :: P.ParsedBuiltin -> RnExp -> TcType -> K.Kind -> K.Kind -> D.Diagnostic
+unexpectedForkKind forkExpr e ty kiActual kiExpected =
+  D.err "kind mismatch"
+    & D.primary (getRange e) errMsg
+    & D.context (getRange forkExpr) (D.showSyntax forkExpr <+> "invoked here")
+    & D.note noteMsg
+  where
+    errMsg =
+      D.unlines
+        [ "forked expression has type",
+          D.indent (D.showSyntax ty),
+          "which has kind" <+> D.showSyntax kiActual
         ]
-      ]
+    noteMsg =
+      D.unwords
+        [ D.showSyntax forkExpr,
+          "can only fork expression with a type with kind",
+          D.showSyntax kiExpected
+        ]
 {-# NOINLINE unexpectedForkKind #-}
 
-typeMismatch :: RnExp -> TcType -> TcType -> TcType -> TcType -> Diagnostic
+-- TODO: can we highlight the origin of the check-against type?
+typeMismatch :: RnExp -> TcType -> TcType -> TcType -> TcType -> D.Diagnostic
 typeMismatch expr tyActual tyActualNF tyExpected tyExpectedNF =
-  PosError (needPos expr) $
-    errUnline
-      [ [Error "Expression"],
-        [indent, Error expr],
-        [Error "has type"],
-        showType tyActual (Just tyActualNF),
-        [Error "but context demands a subtype of"],
-        showType tyExpected (Just tyExpectedNF)
-      ]
+  D.err "type mismatch"
+    & D.primary (getRange expr) errMsg
+  where
+    errMsg =
+      D.unlines
+        [ "actual type",
+          showTypeD tyActual (Just tyActualNF),
+          "is not a subtype of",
+          showTypeD tyExpected (Just tyExpectedNF)
+        ]
 {-# NOINLINE typeMismatch #-}
 
-typeMismatchBind :: K.Bind stage a -> TcType -> RnExp -> Diagnostic
-typeMismatchBind (K.Bind p v _ _) t e =
-  PosError (needPos p) $
-    errUnline
-      [ [Error "Binding of type variable", Error v, Error "in expression"],
-        [indent, Error e],
-        [Error "does not align with type"],
-        showType t Nothing
-      ]
+-- TODO: can we highlight the origin of the check-against type?
+typeMismatchBind :: K.Bind stage a -> TcType -> RnExp -> D.Diagnostic
+typeMismatchBind bind t e =
+  D.err "type mismatch"
+    & D.primary (getRange bind) errMsg
+    & D.context (getRange e) "in this expression"
+  where
+    errMsg =
+      "type variable binder does not align with type"
+        <> D.line
+        <> D.indent (D.showSyntax t)
 {-# NOINLINE typeMismatchBind #-}
 
 -- It is unlikely that this error can be triggered. But I feel that it is
 -- better to have an error message at hand should it be needed than crashing
 -- the compiler.
-noNormalform :: TcType -> Diagnostic
-noNormalform t = PosError (needPos t) [Error "Malformed type:", Error t]
+noNormalform :: TcType -> D.Diagnostic
+noNormalform t =
+  D.err "malformed type"
+    & D.primary (getRange t) "type has no normal form"
 {-# NOINLINE noNormalform #-}
 
-missingUse :: ProgVar TcStage -> Var -> Diagnostic
-missingUse name var =
-  PosError (needPos var) . errUnline $
-    [ [Error "Linear variable", Error name, Error "of type"],
-      showType (varType var) Nothing,
-      [Error "is unused."]
-    ]
+missingUse :: ProgVar TcStage -> Var -> D.Diagnostic
+missingUse _name var =
+  D.err "linearity violated: missing use"
+    & D.primary (getRange var) "linear variable is unused"
+    & D.context (varLocation var) ("variable bound here of type" <+> D.showSyntax (varType var))
 {-# NOINLINE missingUse #-}
 
-invalidConsumed :: Pos -> ProgVar TcStage -> Var -> Pos -> Diagnostic
-invalidConsumed contextLoc name var loc =
-  PosError
-    loc
-    [ Error "Linear variable",
-      Error name,
-      ErrLine,
-      Error "   bound at",
-      Error (varLocation var),
-      ErrLine,
-      Error "Consumed in unrestricted context",
-      ErrLine,
-      Error "   started at",
-      Error contextLoc
-    ]
+invalidConsumed :: SrcRange -> ProgVar TcStage -> Var -> SrcRange -> D.Diagnostic
+invalidConsumed contextLoc _name var loc =
+  D.err "linearity violated: use inside unrestricted context"
+    & D.primary loc "consumed here"
+    & D.context contextLoc "enclosing unrestricted context"
+    & D.context (varLocation var) ("variable bound here of type" <+> D.showSyntax (varType var))
 {-# NOINLINE invalidConsumed #-}
 
-linVarUsedTwice :: Pos -> Pos -> ProgVar TcStage -> Var -> Diagnostic
-linVarUsedTwice loc1 loc2 name var =
-  PosError
-    (max loc1 loc2)
-    [ Error "Linear variable",
-      Error name,
-      Error "is used twice.",
-      ErrLine,
-      Error "Bound at:",
-      Error (varLocation var),
-      ErrLine,
-      Error " Used at:",
-      Error (min loc1 loc2),
-      ErrLine,
-      Error "         ",
-      Error (max loc1 loc2)
-    ]
+linVarUsedTwice :: SrcRange -> SrcRange -> ProgVar TcStage -> Var -> D.Diagnostic
+linVarUsedTwice loc1 loc2 _name var =
+  D.err "linearity violated: multiple uses"
+    & D.primary (min loc1 loc2) "first use"
+    & D.primary (max loc1 loc2) "second use"
+    & D.context (varLocation var) ("variable bound here of type" <+> D.showSyntax (varType var))
 {-# NOINLINE linVarUsedTwice #-}
 
-noArrowType :: RnExp -> TcType -> Diagnostic
+-- TODO: can we highlight more of the context?
+noArrowType :: RnExp -> TcType -> D.Diagnostic
 noArrowType e t =
-  PosError
-    (needPos e)
-    [ Error "Type of",
-      ErrLine,
-      Error "  ",
-      Error e,
-      ErrLine,
-      Error "is neither a function type nor convertible to a function type:",
-      ErrLine,
-      Error "  ",
-      Error t
-    ]
+  D.err "not a function type"
+    & D.primary (getRange e) errMsg
+  where
+    errMsg =
+      "expected a function but this expression's type is not convertible to a function type:"
+        <> D.line
+        <> showTypeD t Nothing
 {-# NOINLINE noArrowType #-}
 
-noForallType :: RnExp -> TcType -> Diagnostic
+-- TODO: can we highlight more of the context?
+noForallType :: RnExp -> TcType -> D.Diagnostic
 noForallType e t =
-  PosError
-    (needPos e)
-    [ Error "Type of",
-      ErrLine,
-      Error "  ",
-      Error e,
-      ErrLine,
-      Error "is neither a forall type nor convertible to a forall type:",
-      ErrLine,
-      Error "  ",
-      Error t
-    ]
+  D.err "not a forall type"
+    & D.primary (getRange e) errMsg
+  where
+    errMsg =
+      "this expression's type is not convertible to a forall type:"
+        <> D.line
+        <> showTypeD t Nothing
 {-# NOINLINE noForallType #-}
 
-typeConstructorNParams :: Pos -> NonEmpty RnType -> Int -> Int -> Diagnostic
-typeConstructorNParams loc ts !given !expected =
-  PosError
-    loc
-    [ Error "Invalid type application",
-      ErrLine,
-      Error "  ",
-      Error $ foldl1 (T.App (needRange loc)) ts,
-      ErrLine,
-      Error "Type constructor",
-      Error $ NE.head ts,
-      Error "needs",
-      Error expected,
-      Error $ plural expected "parameter," "paramters,",
-      Error given,
-      Error "provided."
-    ]
+typeConstructorNParams :: SrcRange -> NonEmpty RnType -> Int -> Int -> D.Diagnostic
+typeConstructorNParams conRange ts !given !expected =
+  D.err "invalid type application"
+    & D.primary conRange expectMsg
+    & D.context (sconcat (getRange <$> ts)) actualMsg
+  where
+    expectMsg =
+      pluralZ
+        expected
+        "no parameters"
+        "one parameter"
+        (D.literal expected <+> "parameters")
+    actualMsg =
+      "but"
+        <+> pluralZ
+          given
+          "none were given"
+          "one was given"
+          (D.literal given <+> "were given")
 {-# NOINLINE typeConstructorNParams #-}
 
-cyclicAliases :: [ExpansionEntry] -> Diagnostic
+cyclicAliases :: [ExpansionEntry] -> D.Diagnostic
 cyclicAliases aliases =
-  PosError errLoc $
-    Error "Cycle in type synonym declarations."
-      : concat
-        [ concat
-            [ [ ErrLine,
-                Error $ "  " ++ showLoc expansionLoc
-              ],
-              aliasHead expansionName (aliasParams expansionAlias),
-              [ Error "=",
-                Error (aliasType expansionAlias)
-              ]
-            ]
-          | ExpansionEntry {..} <- aliases
-        ]
+  D.err (plural aliases "cyclic type alias" "cyclic type aliases")
+    & appEndo (foldMap (Endo . noteAlias) aliases)
   where
-    errLoc = minimum positions
-    locSize = maximum (length . show <$> positions)
-    positions = fmap expansionLoc aliases
-    showLoc (show -> l) = l ++ ":" ++ replicate (locSize - length l) ' '
-    aliasHead name params = Error "type" : Error name : [Error p | _ :@ (p, _) <- fmap needPLoc params]
+    noteAlias e =
+      D.primary (expansionDefRange e) "defined here"
+        >>> D.context (expansionUseRange e) "used here"
 {-# NOINLINE cyclicAliases #-}
 
-invalidNominalKind :: Pos -> String -> TypeVar TcStage -> K.Kind -> NonEmpty K.Kind -> Diagnostic
+invalidNominalKind :: SrcRange -> String -> TypeVar TcStage -> K.Kind -> NonEmpty K.Kind -> D.Diagnostic
 invalidNominalKind loc nomKind name actual allowed =
-  PosError
-    loc
-    [ Error "The declared type of",
-      Error name,
-      Error "is",
-      Error actual,
-      ErrLine,
-      Error $ "‘" ++ nomKind ++ "’",
-      Error "declarations can only declare types with",
-      Error $ plural allowed "kind" "kinds",
-      Error $ joinOr $ fmap show allowed,
-      Error "(the default)."
-    ]
+  D.err ("invalid ‘" <> nomKind <> "’ declaration")
+    & D.primary loc errMsg
+    & D.note noteMsg
+  where
+    errMsg =
+      D.showSyntax name
+        <+> "cannot be declared as kind"
+        <+> D.showSyntax actual
+    noteMsg =
+      D.syntax nomKind
+        <+> "declarations can only declare types with"
+        <+> plural allowed "kind" "kinds"
+        <+> D.joinOr (D.showSyntax <$> allowed)
 {-# NOINLINE invalidNominalKind #-}
 
-mismatchedBind :: Pos -> ANameG scope -> TcType -> Diagnostic
+mismatchedBind :: SrcRange -> ANameG scope -> TcType -> D.Diagnostic
 mismatchedBind loc var t =
-  PosError loc $
-    Error (choose "Binding of type variable" "Binding of variable")
-      : Error var
-      : Error "does not align with type"
-      : ErrLine
-      : showType t Nothing
+  D.err "invalid function declaration"
+    & D.primary loc ("unexpected binding of" <+> choose "type variable" "variable")
+    & D.context (getRange t) "does not align wit declared type"
   where
     choose x y = either (const x) (const y) var
 {-# NOINLINE mismatchedBind #-}
 
-invalidPatternExpr :: String -> Pos -> TcType -> TcType -> Diagnostic
+invalidPatternExpr :: String -> SrcRange -> TcType -> TcType -> D.Diagnostic
 invalidPatternExpr desc loc scrutTy tyNF =
-  PosError loc $
-    errUnline
-      [ [Error desc, Error "has type"],
-        showType scrutTy (Just tyNF),
-        [Error "which is not allowed in pattern expressions."]
-      ]
+  D.err ("non-matchable subject in " <> desc <> " expression")
+    & D.primary loc ("cannot match on values of type" <> D.line <> showTypeD scrutTy (Just tyNF))
 {-# NOINLINE invalidPatternExpr #-}
 
-invalidSessionCaseBranch :: E.CaseBranch f Rn -> Diagnostic
-invalidSessionCaseBranch branch = PosError (needPos branch) [Error msg]
-  where
-    msg = "Branches of a receiving case must bind exactly one variable."
+invalidSessionCaseBranch :: E.CaseBranch f Rn -> D.Diagnostic
+invalidSessionCaseBranch branch =
+  D.err "invalid receiving ‘case’ branch"
+    & D.primary (getRange branch) "must bind exactly one variable"
 {-# NOINLINE invalidSessionCaseBranch #-}
 
-mismatchedCaseConstructor :: Pos -> TcType -> ProgVar TcStage -> Diagnostic
-mismatchedCaseConstructor loc ty con =
-  PosError
-    loc
-    [ Error con,
-      Error "is not a constructor for type",
-      Error ty
-    ]
+mismatchedCaseConstructor :: SrcRange -> TcType -> ProgVar TcStage -> D.Diagnostic
+mismatchedCaseConstructor conRange ty _con =
+  D.err ""
+    & D.primary conRange errMsg
+    -- TODO: does the `getRange ty` give use the correct range? Probably not.
+    & D.context (getRange ty) conMsg
+  where
+    errMsg =
+      "not a type constructor for type"
+        <+> D.showSyntax ty
+    conMsg =
+      "subject of"
+        <+> D.syntax "case"
+        <+> "expression is of type"
+        <+> D.showSyntax ty
 {-# NOINLINE mismatchedCaseConstructor #-}
 
-missingCaseBranches :: Pos -> [ProgVar TcStage] -> Diagnostic
+missingCaseBranches :: SrcRange -> NonEmpty (ProgVar TcStage) -> D.Diagnostic
 missingCaseBranches loc branches =
-  PosError loc $
-    Error "Incomplete case. Missing"
-      : Error (plural branches "branch:" "branches:")
-      : missingBranches branches
+  D.err "incomplete pattern match"
+    & D.fix loc fixMsg
+  where
+    fixMsg = case branches of
+      c :| [] -> "add a branch for" <+> D.showSyntax c
+      _ -> "add branches for" <+> D.joinAnd (D.showSyntax <$> branches)
 {-# NOINLINE missingCaseBranches #-}
 
-noSingularConstructorType :: Pos -> TcType -> [ProgVar TcStage] -> Diagnostic
-noSingularConstructorType loc ty branches =
-  PosError loc $
-    Error "Values of type"
-      : ErrLine
-      : Error "  "
-      : Error ty
-      : Error "cannot appear as the right hand side of a let-pattern."
-      : ErrLine
-      : Error "Too many constructors. Unhandled "
-      : Error (plural branches "constructor:" "constructors:")
-      : missingBranches branches
-{-# NOINLINE noSingularConstructorType #-}
+data PatternBranch = PatternBranch !SrcRange !(ProgVar TcStage)
+  deriving stock (Generic)
+  deriving (HasRange) via Generically PatternBranch
 
-missingBranches :: [ProgVar TcStage] -> [ErrorMessage]
-missingBranches branches =
-  concat
-    [ [ErrLine, Error "  ", branch]
-      | branch <- truncate 3 (Error "...") (Error <$> branches)
-    ]
+newtype WildcardBranch = WildcardBranch SrcRange
+  deriving stock (Generic)
+  deriving (HasRange) via Generically WildcardBranch
 
-emptyCaseExpr :: Pos -> Diagnostic
-emptyCaseExpr loc = PosError loc [Error "Empty case expression."]
-{-# NOINLINE emptyCaseExpr #-}
+data CondBranch = CondThen !SrcRange | CondElse !SrcRange
+  deriving stock (Generic)
+  deriving (HasRange) via Generically CondBranch
 
-data PatternBranch = PatternBranch Pos (ProgVar TcStage)
-
-instance HasPos PatternBranch where
-  pos (PatternBranch p _) = p
-
-class HasPos a => BranchSpec a where
-  displayBranchError :: a -> [ErrorMessage]
-
-instance BranchSpec Void where
-  displayBranchError = absurd
-
-instance BranchSpec PatternBranch where
-  displayBranchError (PatternBranch _ p) = [Error "branch", Error p]
-  {-# INLINE displayBranchError #-}
-
-newtype WildcardBranch = WildcardBranch Pos
-
-instance HasPos WildcardBranch where
-  pos (WildcardBranch p) = p
-  {-# INLINE pos #-}
-
-instance BranchSpec WildcardBranch where
-  displayBranchError _ = [Error "wildcard branch"]
-  {-# INLINE displayBranchError #-}
-
-data CondBranch = CondThen Pos | CondElse Pos
-
-instance HasPos CondBranch where
-  pos = \case
-    CondThen p -> p
-    CondElse p -> p
-  {-# INLINE pos #-}
-
-instance BranchSpec CondBranch where
-  displayBranchError = \case
-    CondThen _ -> [Error "‘then’ branch"]
-    CondElse _ -> [Error "‘else’ branch"]
-  {-# INLINE displayBranchError #-}
+{- ORMOLU_DISABLE -}
+class (HasRange a) => BranchSpec a
+instance BranchSpec Void
+instance BranchSpec PatternBranch
+instance BranchSpec WildcardBranch
+instance BranchSpec CondBranch
+{- ORMOLU_ENABLE -}
 
 branchedConsumeDifference ::
-  (BranchSpec a, BranchSpec b) => ProgVar TcStage -> Var -> a -> Pos -> b -> Diagnostic
-branchedConsumeDifference name var consumeBranch consumeLoc otherBranch =
-  PosError consumeLoc $
-    concat
-      [ [ Error "Linear variable",
-          ErrLine,
-          Error "  ",
-          Error name,
-          Error ":",
-          Error (varType var),
-          ErrLine,
-          Error "is not consumed in"
-        ],
-        displayBranchError otherBranch,
-        [ Error "at",
-          Error (needPos otherBranch),
-          ErrLine,
-          Error "but is consumed in"
-        ],
-        displayBranchError consumeBranch,
-        [ Error "at",
-          Error (needPos consumeBranch)
-        ]
-      ]
+  (BranchSpec a, BranchSpec b) =>
+  -- | Variable name.
+  ProgVar TcStage ->
+  -- | Variable declaration information.
+  Var ->
+  -- | The branch that consumed the variable.
+  a ->
+  -- | The range where the variable was consumed.
+  SrcRange ->
+  -- | The other branch with the unconsumed variable.
+  b ->
+  D.Diagnostic
+branchedConsumeDifference _name var consumeBranch consumeLoc otherBranch =
+  D.err "linearity violated: use differes between branches"
+    & D.primary consumeLoc "variable consumed here"
+    & D.context (getRange consumeBranch) "variable consumed in this branch"
+    & D.context (getRange otherBranch) "variable not consumed in this branch"
+    & D.context (varLocation var) ("variable bound here of type" <+> D.showSyntax (varType var))
 {-# NOINLINE branchedConsumeDifference #-}
 
-branchPatternBindingCount :: Pos -> ProgVar TcStage -> Int -> Int -> Diagnostic
-branchPatternBindingCount loc name !expected !given =
-  PosError
-    loc
-    [ Error "The constructor",
-      Error name,
-      Error "should have",
-      Error (pluralZ expected "no arguments," "one argument," (show expected ++ " arguments,")),
-      Error "but has been given",
-      Error (pluralZ given "none" "one" (show given))
-    ]
+branchPatternBindingCount :: SrcRange -> ProgVar TcStage -> Int -> Int -> D.Diagnostic
+branchPatternBindingCount loc _name !expected !given =
+  D.err ("invalid pattern: " <> mainReason)
+    & D.primary loc msg
+  where
+    mainReason =
+      if given < expected
+        then "too few constructor arguments"
+        else "too many constructor arguments"
+    msg =
+      "constructor should have"
+        <+> pluralZ expected "no arguments," "one argument," (D.literal expected <+> "arguments,")
+        <+> "but has been given"
+        <+> pluralZ given "none" "one argument" (D.literal given <+> "argument")
 {-# NOINLINE branchPatternBindingCount #-}
 
-unnecessaryWildcard :: Pos -> Diagnostic
-unnecessaryWildcard loc = PosError loc [Error msg]
-  where
-    msg = "Unnecessary wildcard. All possible branches are handled."
+unnecessaryWildcard :: SrcRange -> D.Diagnostic
+unnecessaryWildcard loc =
+  D.warn "unnecessary wildcard"
+    & D.primary loc "branch will never be taken"
 {-# NOINLINE unnecessaryWildcard #-}
 
-wildcardNotAllowed :: Pos -> Pos -> Diagnostic
+wildcardNotAllowed :: SrcRange -> SrcRange -> D.Diagnostic
 wildcardNotAllowed wildLoc caseLoc =
-  PosError
-    wildLoc
-    [ Error "Wildcards are not allowed in the context started at",
-      Error caseLoc
-    ]
+  D.err "wildcard pattern not allowed in receiving ‘case’"
+    & D.primary wildLoc "wildcard branch appears here"
+    & D.context caseLoc ("in this receving" <+> D.syntax "case" <+> "expression")
+    & D.hint "Handle all branches covered by the wildcard explicitly."
 {-# NOINLINE wildcardNotAllowed #-}
 
-linearWildcard :: Pos -> TcType -> Diagnostic
+linearWildcard :: SrcRange -> TcType -> D.Diagnostic
 linearWildcard loc ty =
-  PosError
-    loc
-    [ Error "Wildcard ignores a linear value of type",
-      Error ty
-    ]
+  D.err "linearity violated: value unused"
+    & D.primary loc ("wildcard ignores a linear value of type" <+> D.showSyntax ty)
 {-# NOINLINE linearWildcard #-}
 
-protocolConAsValue :: Pos -> ProgVar TcStage -> TypeVar TcStage -> Diagnostic
+protocolConAsValue :: SrcRange -> ProgVar TcStage -> TypeVar TcStage -> D.Diagnostic
 protocolConAsValue loc con parent =
-  PosError
-    loc
-    [ Error "Constructor",
-      Error con,
-      Error "is a protocol constructor for type",
-      Error parent,
-      ErrLine,
-      Error "Protocol constructors can only be used in case patterns and arguments to ‘select’."
-    ]
+  D.err "protocol constructor used as value"
+    & D.primary loc errMsg
+    & D.note noteMsg
+  where
+    errMsg =
+      D.showSyntax con
+        <+> "is a protocol constructor for"
+        <+> D.showSyntax parent
+    noteMsg =
+      "Protocol constructors can only be used in case patterns and arguments to"
+        <+> D.syntax "select"
+        <> "."
 {-# NOINLINE protocolConAsValue #-}
 
-builtinMissingApp :: RnExp -> String -> Diagnostic
+builtinMissingApp :: RnExp -> D.Doc -> D.Diagnostic
 builtinMissingApp e expected =
-  PosError
-    (needPos e)
-    [ Error "Builtin",
-      Error e,
-      Error "must be followed by",
-      Error expected
-    ]
+  D.err "bare builtin"
+    & D.primary (getRange e) ("must be followed by" <+> expected)
 {-# NOINLINE builtinMissingApp #-}
 
-unboundVar :: forall stage scope. SingI scope => Pos -> Name stage scope -> Diagnostic
-unboundVar loc v =
-  PosError
-    loc
-    [ Error "Unbound",
-      Error $ id @String $ eitherName @scope "type variable" "variable",
-      Error v
-    ]
-{-# SPECIALIZE unboundVar :: Pos -> ProgVar TcStage -> Diagnostic #-}
-{-# SPECIALIZE unboundVar :: Pos -> TypeVar TcStage -> Diagnostic #-}
+unboundVar :: forall stage scope. (SingI scope) => SrcRange -> Name stage scope -> D.Diagnostic
+unboundVar loc _v =
+  D.err ("unbound " <> kind)
+    & D.primary loc (D.string kind <+> "used here")
+  where
+    kind :: String
+    kind = eitherName @scope "type variable" "variable"
+{-# SPECIALIZE unboundVar :: SrcRange -> ProgVar TcStage -> D.Diagnostic #-}
+{-# SPECIALIZE unboundVar :: SrcRange -> TypeVar TcStage -> D.Diagnostic #-}
 
-undeclaredCon :: forall stage scope. SingI scope => Pos -> Name stage scope -> Diagnostic
-undeclaredCon loc v =
-  PosError
-    loc
-    [ Error "Undeclared",
-      Error $ id @String $ eitherName @scope "type" "constructor",
-      Error v
-    ]
-{-# SPECIALIZE undeclaredCon :: Pos -> ProgVar TcStage -> Diagnostic #-}
-{-# SPECIALIZE undeclaredCon :: Pos -> TypeVar TcStage -> Diagnostic #-}
+undeclaredCon :: forall stage scope. (SingI scope) => SrcRange -> Name stage scope -> D.Diagnostic
+undeclaredCon loc _v =
+  D.err ("unknown " <> kind)
+    & D.primary loc (D.string kind <+> "used here")
+  where
+    kind :: String
+    kind = eitherName @scope "type" "constructor"
+{-# SPECIALIZE undeclaredCon :: SrcRange -> ProgVar TcStage -> D.Diagnostic #-}
+{-# SPECIALIZE undeclaredCon :: SrcRange -> TypeVar TcStage -> D.Diagnostic #-}
 
-synthUntypedLambda :: Pos -> Pos -> ProgVar TcStage -> Diagnostic
-synthUntypedLambda lamLoc varLoc var =
-  PosError
-    varLoc
-    [ Error "Cannot deduce type of parameter",
-      Error var,
-      Error "in lambda abstraction at",
-      Error lamLoc,
-      ErrLine,
-      Error "Please provide a type annotation."
-    ]
+synthUntypedLambda :: SrcRange -> SrcRange -> ProgVar TcStage -> D.Diagnostic
+synthUntypedLambda lamRange varRange _var =
+  D.err "ambigous type"
+    & D.primary varRange "cannot deduce type of lambda parameter"
+    & D.context lamRange "in lambda abstraction"
+    & D.hint "Provide a type signature."
 {-# NOINLINE synthUntypedLambda #-}
 
-benchKindMismatch :: Pos -> K.Kind -> Pos -> K.Kind -> Diagnostic
+ambigousExprType :: SrcRange -> D.Diagnostic
+ambigousExprType range =
+  D.err "ambigous type"
+    & D.fix range "provide a type signature"
+
+benchKindMismatch :: SrcRange -> K.Kind -> SrcRange -> K.Kind -> D.Diagnostic
 benchKindMismatch p1 k1 p2 k2 =
-  PosError p1 . errUnline $
-    [ [Error "Kind mismatch in benchmark pragma."],
-      [ indent,
-        Error "type at",
-        Error p1,
-        Error "has kind",
-        Error k1
-      ],
-      [ indent,
-        Error "type at",
-        Error p2,
-        Error "has kind",
-        Error k2
-      ]
-    ]
+  D.err "kind mismatch in benchmark pragma"
+    & D.primary p1 ("type has kind" <+> D.showSyntax k1)
+    & D.primary p2 ("type has kind" <+> D.showSyntax k2)
+    & D.note "Heterogeneous type equality is not supported."
 {-# NOINLINE benchKindMismatch #-}
 
-benchTypesEqual :: Pos -> Diagnostic
-benchTypesEqual p = PosError p [Error "Types in benchmark are equal."]
+benchTypesEqual :: TcType -> TcType -> D.Diagnostic
+benchTypesEqual t1 t2 =
+  D.err "benchmarked types are equal"
+    & D.primary (getRange t1) "first type ..."
+    & D.primary (getRange t2) "... is the same as the second type"
+{-# NOINLINE benchTypesEqual #-}
 
-showType :: TcType -> Maybe TcType -> [ErrorMessage]
-showType t mNF
-  | Just tNF <- mNF,
-    Alpha t /= Alpha tNF =
-      [ Error $ MsgTag " [NF]",
-        Error tNF,
-        ErrLine,
-        Error $ MsgTag "[LIT]",
-        Error t
-      ]
-  | otherwise =
-      [Error "     ", Error t]
-
-errUnline :: [[ErrorMessage]] -> [ErrorMessage]
-errUnline = List.intercalate [ErrLine]
-
-indent :: ErrorMessage
-indent = Error "   "
+showTypeD :: TcType -> Maybe TcType -> D.Doc
+showTypeD t mNF = case mNF of
+  Just tNF
+    | Alpha t /= Alpha tNF ->
+        D.tag (D.literal @String " [NF] ")
+          <> D.showSyntax tNF
+          <> D.line
+          <> D.tag (D.literal @String "[LIT] ")
+          <> D.showSyntax t
+  _ -> D.indent' 6 $ D.showSyntax t

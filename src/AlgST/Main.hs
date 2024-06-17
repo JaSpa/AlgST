@@ -2,7 +2,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 
 module AlgST.Main (main) where
 
@@ -23,12 +22,15 @@ import AlgST.Typing (Tc)
 import AlgST.Typing qualified as Tc
 import AlgST.Typing.Align
 import AlgST.Util qualified as Util
+import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.Error
 import AlgST.Util.Output
+import AlgST.Util.SourceManager
 import Control.Category ((>>>))
 import Control.Exception
 import Control.Monad
 import Data.Bifunctor
+import Data.ByteString (ByteString)
 import Data.DList.DNonEmpty qualified as DNE
 import Data.Either
 import Data.Foldable
@@ -93,9 +95,10 @@ checkSources ::
   Source ->
   IO (Maybe (HashMap ModuleName (Driver.Result Tc)))
 checkSources runOpts outH outMode mainSource = do
-  mainSource <- case mainSource of
+  (mainSource, srcManager) <- case mainSource of
     SourceFile fp -> do
-      Just . (FP.normalise fp,) <$> readFile' fp
+      (buffer, srcManager) <- insertFile fp emptyManager
+      pure (Just buffer, srcManager)
     SourceStdin -> do
       -- If the input comes from the terminal and either of the output
       -- streams goes to the terminal we output a separating newline.
@@ -106,16 +109,16 @@ checkSources runOpts outH outMode mainSource = do
             | stdinTerm && stdoutTerm = Just stdout
             | stdinTerm && stderrTerm = Just stderr
             | otherwise = Nothing
-      Just . ("«stdin»",)
-        <$> getContents'
-        <* for_ termOut \h -> hPutChar h '\n'
+      (buffer, srcManager) <- insertStdin "«stdin»" emptyManager
+      for_ termOut \h -> hPutChar h '\n'
+      pure (Just buffer, srcManager)
     SourceMain ->
       -- We expect the driver to find the Main module through its usual
       -- module lookup mechanism.
-      pure Nothing
+      pure (Nothing, emptyManager)
 
   let driverSettings =
-        maybe id (uncurry (Driver.addModuleSource MainModule)) mainSource $
+        maybe id (Driver.addModuleSource MainModule) mainSource $
           Driver.defaultSettings
             { driverSequential = optsDriverSeq runOpts,
               driverQuietProgress = optsQuiet runOpts,
@@ -136,7 +139,7 @@ checkSources runOpts outH outMode mainSource = do
 answerQueries ::
   OutputHandle ->
   OutputMode ->
-  [Query] ->
+  [Query String] ->
   HashMap ModuleName (Driver.Result Tc) ->
   IO Bool
 answerQueries out outMode queries checkResult = do
@@ -179,11 +182,11 @@ answerQueries out outMode queries checkResult = do
     parseRename ::
       (SynTraversable Parse Rn (s Parse) (s Rn)) =>
       P.Parser (s Parse) ->
-      String ->
+      Buffer ->
       (s Rn -> Tc.TypeM a) ->
-      Either (NonEmpty Diagnostic) a
-    parseRename p s f = do
-      parsed <- P.runParser p s
+      Either D.Errors a
+    parseRename p buf f = do
+      parsed <- P.runParser p (bufferContents buf)
       RenameExtra extra <-
         renameModuleExtra (ModuleName "Q") emptyModule
           & snd

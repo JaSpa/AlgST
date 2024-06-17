@@ -1,12 +1,14 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 
 module AlgST.Parse.LexerUtils where
 
 import AlgST.Parse.Token
 import AlgST.Util.Diagnose qualified as D
+import AlgST.Util.Operators
 import AlgST.Util.SourceManager
 import Control.Monad.Reader
 import Control.Monad.Validate
@@ -68,24 +70,22 @@ textToken' f g s = Right $ g $ fullRange s @- f decoded
 
 invalidChar :: LexAction
 invalidChar s = Left do
-  D.err
-    (fullRange s)
-    "invalid source character"
-    "skipping this character, trying to continue"
+  D.err "invalid source character"
+    & D.primary (fullRange s) "skipping this character, trying to continue"
 
 -- | Emits an error about invalid UTF-8. We try to recover and return the
 -- remaining input.
-invalidUTF8 :: MonadValidate D.DErrors m => AlexInput -> m AlexInput
+invalidUTF8 :: (MonadValidate D.DErrors m) => AlexInput -> m AlexInput
 invalidUTF8 s =
   -- TODO: Implement recovery.
   refute (pure err)
   where
     err =
-      D.err
-        (SizedRange (startLoc s) 1)
-        "invalid UTF-8"
-        ("unexpected byte 0x" ++ showByte (BS.head s))
-        & D.hint "I stopped reading the input file here."
+      D.err "invalid UTF-8"
+        & D.primary
+          (SizedRange (startLoc s) 1)
+          ("unexpected byte" <+> D.literal ("0x" ++ showByte (BS.head s)))
+        & D.note "I stopped reading the input file here."
     showByte b =
       "0x" ++ case showHex b "" of
         hex@[_] -> '0' : hex

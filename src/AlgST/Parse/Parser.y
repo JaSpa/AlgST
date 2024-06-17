@@ -267,9 +267,8 @@ Decl :: { ModuleBuilder }
     }
   -- Type abbreviation
   | type KindedTVar TypeParams '=' Type { do
-      let (nameRange, name, mkind) = $2
-      let !range = sconcat $
-            getRange $1 :| nameRange : fmap getRange $3 
+      let (_nameRange, name, mkind) = $2
+      let !range = sconcat $ getRange $1 :| fmap getRange $3 
       let decl = AliasDecl range TypeAlias
             { aliasParams = $3
             , aliasKind = mkind
@@ -279,9 +278,8 @@ Decl :: { ModuleBuilder }
     }
   -- Datatype declaration
   | data KindedTVar TypeParams { do
-      let (nameRange, name, mkind) = $2
-      let !range = sconcat $
-            getRange $1 :| nameRange : fmap getRange $3 
+      let (_nameRange, name, mkind) = $2
+      let !range = sconcat $ getRange $1 :| fmap getRange $3 
       let decl = DataDecl range TypeNominal
             { nominalParams = $3
             , nominalKind = K.TU `fromMaybe` mkind
@@ -290,9 +288,8 @@ Decl :: { ModuleBuilder }
       moduleTypeDecl name decl
     }
   | data KindedTVar TypeParams '=' DataCons { do
-      let (nameRange, name, mkind) = $2
-      let !range = sconcat $
-            getRange $1 :| nameRange : fmap getRange $3 
+      let (_nameRange, name, mkind) = $2
+      let !range = sconcat $ getRange $1 :| fmap getRange $3 
       let decl = DataDecl range TypeNominal
             { nominalParams = $3
             , nominalKind = K.TU `fromMaybe` mkind
@@ -301,9 +298,8 @@ Decl :: { ModuleBuilder }
       moduleTypeDecl name decl
     }
   | protocol KindedTVar TypeParams '=' DataCons { do
-      let (nameRange, name, mkind) = $2
-      let !range = sconcat $
-            getRange $1 :| nameRange : fmap getRange $3 
+      let (_nameRange, name, mkind) = $2
+      let !range = sconcat $ getRange $1 :| fmap getRange $3 
       let decl = ProtoDecl range TypeNominal
             { nominalParams = $3
             , nominalKind = K.P `fromMaybe` mkind
@@ -414,19 +410,13 @@ TypeApps :: { DL.DList PType }
   : Type                           { DL.singleton $1 }
   | TypeApps ',' Type              { $1 `DL.snoc` $3 }
 
--- RecExp :: { forall a. (Pos -> ProgVar PStage -> PType -> E.RecLam Parse -> a) -> Parser a }
---   : rec ProgVar TySig '=' Exp {
---       \f -> case $5 of
---         E.RecAbs r -> pure $ f (needPos $1) (unL $2) $3 r
---         _ -> fatalError $ errorRecNoTermLambda (getRange $1) (needRange $5)
-
 -- Parses a rec-expression and retuns the recursive name alongside.
 RecExp :: { (ProgVar PStage, PExp) }
   : rec ProgVar TySig '=' Exp {% do
       let fullRange = $1 `runion` $5
       case $5 of
         E.RecAbs r -> pure (unL $2, E.Rec fullRange (unL $2) $3 r)
-        _ -> fatalError $ errorRecNoTermLambda fullRange (getRange $1) (getRange $5)
+        _ -> fatalError $ errorRecBadRhsLambda fullRange (getRange $1) $5
     }
 
 -- Constructs a let-expression from a
@@ -702,7 +692,7 @@ KindBind :: { Located (TypeVar PStage, K.Kind) }
   | '(' TypeVar ')'           { ($1 `runion` $3) @- (unL $2, K.TU) }
   | TypeVar                   { $1 @- (unL $1, K.TU) }
 
-KindedTVar :: { (SrcRange,  TypeVar PStage, Maybe K.Kind) }
+KindedTVar :: { (SrcRange, TypeVar PStage, Maybe K.Kind) }
   : TypeName ':' Kind { ($1 `runion` $3, unL $1, Just (unL $3)) }
   | TypeName          { (getRange $1, unL $1, Nothing) }
 

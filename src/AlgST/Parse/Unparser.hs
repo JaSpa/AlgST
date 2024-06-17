@@ -1,6 +1,8 @@
+{-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -23,6 +25,9 @@ module AlgST.Parse.Unparser
     unparseCase,
     showCaseMap,
     showForall,
+
+    -- * @Unparse@ as @Show@ implementation
+    ShowUnparse (..),
   )
 where
 
@@ -122,6 +127,15 @@ bracket (inner, image) side outer
   | noparens inner outer side = image
   | otherwise = "(" ++ image ++ ")"
 
+newtype ShowUnparse a = ShowUnparse {getShowUnparse :: a}
+
+instance (Unparse a) => Show (ShowUnparse a) where
+  show = snd . unparse . getShowUnparse
+
+deriving via ShowUnparse (T.Type x) instance (Unparse (T.XType x)) => Show (T.Type x)
+
+deriving via ShowUnparse (E.Exp x) instance (Unparse (T.XType x), Unparse (E.XExp x)) => Show (E.Exp x)
+
 class Unparse t where
   unparse :: t -> Fragment
 
@@ -142,9 +156,6 @@ unparseApp s = go (maxRator, s) . fmap unparse
       let l = bracket x Op.L appRator
           r = bracket y Op.R appRator
        in go (appRator, l ++ " " ++ r) ys
-
-instance (Unparse (T.XType x)) => Show (T.Type x) where
-  show = snd . unparse
 
 instance (Unparse (T.XType x)) => Unparse (T.Type x) where
   unparse (T.Unit _) = (maxRator, "()")
@@ -182,9 +193,6 @@ instance (Unparse (T.XType x)) => Unparse (T.Type x) where
       l = bracket (unparse a) Op.L appRator
       r = bracket (unparse b) Op.R appRator
   unparse (T.Type x) = unparse x
-
-instance (Unparse (E.XExp x), Unparse (T.XType x)) => Show (Exp x) where
-  show = snd . unparse
 
 instance (Unparse (E.XExp x), Unparse (T.XType x)) => Unparse (Exp x) where
   -- Basic values

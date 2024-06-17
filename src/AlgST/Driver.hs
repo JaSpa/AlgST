@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -73,6 +74,7 @@ import AlgST.Typing.Phase
 import AlgST.Util (plural)
 import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.Error
+import AlgST.Util.Operators
 import AlgST.Util.Output
 import AlgST.Util.SourceManager
 import Algebra.Graph.AdjacencyMap.Algorithm qualified as G (Cycle)
@@ -100,11 +102,12 @@ import Data.List.NonEmpty qualified as NE
 import Data.Sequence (Seq (..))
 import Data.Sequence qualified as Seq
 import Data.Singletons
+import Data.Text.Lazy qualified as TL
 import Data.Tuple (Solo (..))
 import Error.Diagnose qualified as E
 import Lens.Family2 (view, (+~), (.~))
-import Prettyprinter qualified as P
 import Prettyprinter.Render.String qualified as P
+import Prettyprinter.Render.Terminal qualified as Term
 import System.FilePath
 import System.IO.Error
 
@@ -445,8 +448,8 @@ checkAll dg = do
 
 missingModuleError :: SrcRange -> ModuleName -> D.Diagnostic
 missingModuleError importRange name =
-  D.err importRange "import error" $
-    "Cannot locate module ‘" <> unModuleName name <> "’"
+  D.err "import error"
+    & D.primary importRange ("cannot locate module" <+> D.syntax (unModuleName name))
 {-# NOINLINE missingModuleError #-}
 
 -- | Looks for a module with the given name. If successfull this returns the
@@ -559,19 +562,22 @@ noteDependencies depsRef name fp parsed = do
   pure newDeps
 
 cycleError :: G.Cycle (ModuleName, ImportLocation) -> D.Diagnostic
-cycleError ((m, iloc) :| rest) =
-  D.err (getRange iloc) "cyclic imports" firstMessage
-    & maybe id markAdditional (nonEmpty rest)
+cycleError ((m, iloc) :| []) =
+  D.err "cyclic import"
+    & D.primary (getRange iloc) ("Module" <+> D.syntax (unModuleName m) <+> "imports itself")
+cycleError importCycle@((m, _) :| _) =
+  D.err "cyclic imports"
+    & markImports importCycle
   where
-    firstMessage =
-      case rest of
-        [] -> "Module ‘" <> unModuleName m <> "’ imports itself"
-        (m', _) : _ -> "Module ‘" <> unModuleName m <> "’ imports ‘" <> unModuleName m' <> "’"
-    markAdditional ((m', iloc') :| rest) = do
+    markImports ((m', iloc') :| rest) = do
       let restNE = nonEmpty rest
       let target = maybe m (fst . NE.head) restNE
-      let msg = "Module ‘" <> unModuleName m' <> "’ imports ‘" <> unModuleName target <> "’"
-      D.context (getRange iloc') msg . maybe id markAdditional restNE
+      let msg =
+            "Module"
+              <+> D.syntax (unModuleName m')
+              <+> "imports"
+              <+> D.syntax (unModuleName target)
+      D.context (getRange iloc') msg . maybe id markImports restNE
 
 setError :: Driver ()
 setError = do
@@ -580,23 +586,33 @@ setError = do
 
 -- | Report the errors to the user.
 reportErrors :: (Foldable f) => f D.Diagnostic -> Driver ()
-reportErrors diags
-  | null diags =
-      pure ()
-  | otherwise = do
-      setError
-      -- TODO: have to decide between Unicode and ASCII output as well.
-      (handle, mode) <- askOutputDiags
-      --  TODO: we should probably do this whenever we are creating a buffer from a file.
-      -- cwd <- liftIO getCurrentDirectory
-      -- let fpShort = makeRelative cwd fp
-      baseDiag <- Driver $ lift $ buildBaseDiagnostic diags
-      let diagDoc = D.prettyDiagnostic D.WithUnicode (D.TabSize 2) baseDiag
-      let diagLayout = P.layoutPretty P.defaultLayoutOptions diagDoc
-      let diagStyled = case mode of
-            Colorized -> P.reAnnotateS E.defaultStyle diagLayout
-            Plain -> P.unAnnotateS diagLayout
-      outputS handle $ P.renderShowS diagStyled . showChar '\n'
+reportErrors diags = when (not (null diags)) do
+  --  TODO: we should probably do this whenever we are creating a buffer from a file.
+  -- cwd <- liftIO getCurrentDirectory
+  -- let fpShort = makeRelative cwd fp
+
+  -- Turn the set of diagnostics refering to abstract source locations into a
+  -- diagnostic pointing to the actual file contents.
+  baseDiag <- Driver $ lift $ buildBaseDiagnostic diags
+
+  -- Check if the diagnostics contain an error and if so set the flag
+  -- accordingly.
+  let isError = \case
+        E.Err {} -> True
+        E.Warn {} -> False
+  when (any isError (E.reportsOf baseDiag)) do
+    setError
+
+  -- Render and print the diagnostics.
+  -- TODO: We have to decide between Unicode and ASCII output as well.
+  -- Idea: look at the encoding of the output handle if the user didn't
+  -- specify a flag forcing ASCII output.
+  -- TODO: Take the maximum line width from the terminal.
+  let diagDoc = D.layoutDiagnostic D.WithUnicode (Just 80) baseDiag
+  (handle, mode) <- askOutputDiags
+  case mode of
+    Colorized -> outputStrLn handle $ TL.unpack $ Term.renderLazy diagDoc
+    Plain -> outputS handle $ P.renderShowS diagDoc . showChar '\n'
 
 -- TODO: remove this function.
 reportModuleErrors :: (Foldable f) => ModuleName -> f D.Diagnostic -> Driver ()

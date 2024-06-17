@@ -48,7 +48,7 @@ class ErrorMsg a where
 newtype MsgTag a = MsgTag a
 
 data ErrorMessage where
-  Error :: ErrorMsg a => a -> ErrorMessage
+  Error :: (ErrorMsg a) => a -> ErrorMessage
   ErrLine :: ErrorMessage
 
 data DiagKind
@@ -92,15 +92,15 @@ instance ErrorMsg DiagKind where
 instance HasPos Diagnostic where
   pos = diagnosticPos
 
-instance ErrorMsg a => ErrorMsg (Located a) where
+instance (ErrorMsg a) => ErrorMsg (Located a) where
   msg = msg . unL
   msgStyling = msgStyling . unL
 
-instance ErrorMsg a => ErrorMsg (R.Located a) where
+instance (ErrorMsg a) => ErrorMsg (R.Located a) where
   msg = msg . R.unL
   msgStyling = msgStyling . R.unL
 
-instance Unparse (T.XType x) => ErrorMsg (T.Type x) where
+instance (Unparse (T.XType x)) => ErrorMsg (T.Type x) where
   msg = show
   msgStyling _ = redFGStyling
 
@@ -140,15 +140,15 @@ instance ErrorMsg Int where
   msg = show
   msgStyling _ = redFGStyling
 
-instance ErrorMsg a => ErrorMsg (MsgTag a) where
+instance (ErrorMsg a) => ErrorMsg (MsgTag a) where
   msg = coerce (msg @a)
   msgStyling (MsgTag a) = msgStyling a ++ [SetConsoleIntensity NormalIntensity]
 
-instance Unparse (T.XType x) => ErrorMsg [T.Type x] where
+instance (Unparse (T.XType x)) => ErrorMsg [T.Type x] where
   msg = showTypeList
   msgStyling _ = redFGStyling
 
-showTypeList :: Unparse (T.XType x) => [T.Type x] -> String
+showTypeList :: (Unparse (T.XType x)) => [T.Type x] -> String
 showTypeList ts = "[" ++ intercalate ", " types ++ "]"
   where
     types = map show ts

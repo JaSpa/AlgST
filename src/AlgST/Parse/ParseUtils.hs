@@ -7,6 +7,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -35,7 +36,7 @@ module AlgST.Parse.ParseUtils
 
     -- ** Error messages
     errorNoTermLinLambda,
-    errorRecNoTermLambda,
+    errorRecBadRhsLambda,
     errorMultipleWildcards,
     errorMisplacedPairCon,
     errorDuplicateBind,
@@ -86,6 +87,7 @@ import AlgST.Syntax.Operators
 import AlgST.Syntax.Tree qualified as T
 import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.Lenses qualified as L
+import AlgST.Util.Operators
 import AlgST.Util.SourceManager
 import Control.Arrow (Kleisli (..), (>>>))
 import Control.Monad
@@ -184,7 +186,8 @@ sectionsParenthesized (InParens r) ops = do
 
 errorMissingOperand :: (HasRange o) => Maybe SrcRange -> o -> D.Diagnostic
 errorMissingOperand sectionRange op =
-  D.err (getRange op) "missing operand" "this operator is missing an operand"
+  D.err "missing operand"
+    & D.primary (getRange op) "operator is missing an operand"
     & maybe id sectionFix sectionRange
   where
     sectionFix r = D.fix r "wrap it in parentheses for an operator section"
@@ -272,10 +275,8 @@ moduleValueBinding valueName params e = Kleisli \p0 -> do
   case mincomplete' of
     Nothing -> lift do
       addError $
-        D.err
-          (getRange valueName)
-          "missing declaration"
-          "binding should be preceeded by its declaration"
+        D.err "missing declaration"
+          & D.primary (getRange valueName) "binding must be preceeded by its declaration"
       pure p
     Just (defLoc :@ _, ty) -> lift do
       let decl =
@@ -505,37 +506,31 @@ instance DuplicateError a SrcRange where
 
 errorMultipleDeclarations :: (HasRange a1, HasRange a2) => a1 -> a2 -> D.Diagnostic
 errorMultipleDeclarations (getRange -> r1) (getRange -> r2) =
-  D.err
-    (max r1 r2)
-    "duplicate declaration"
-    "name is already defined in this module"
-    & D.context (min r1 r2) "previous declaration"
+  D.err "duplicate declaration"
+    & D.primary (min r1 r2) "first declaration"
+    & D.primary (max r1 r2) "second declaration"
+{-# NOINLINE errorMultipleDeclarations #-}
 
 errorDuplicateBind :: (HasRange a1, HasRange a2) => a1 -> a2 -> D.Diagnostic
 errorDuplicateBind (getRange -> r1) (getRange -> r2) =
-  D.err
-    (max r1 r2)
-    "duplicate binding"
-    "binding conflicts with previous binding of the same name"
-    & D.context (min r1 r2) "previous binding"
+  D.err "duplicate binding"
+    & D.primary (min r1 r2) "first binding"
+    & D.primary (max r1 r2) "second binding"
 {-# NOINLINE errorDuplicateBind #-}
 
 errorDuplicateBranch :: (HasRange a1, HasRange a2) => a1 -> a2 -> D.Diagnostic
 errorDuplicateBranch (getRange -> r1) (getRange -> r2) =
-  D.err
-    (max r1 r2)
-    "duplicate case alternative"
-    "case alternative already provided"
-    & D.context (min r1 r2) "previous location"
+  D.err "duplicate case alternative"
+    & D.primary (min r1 r2) "first occurence"
+    & D.primary (max r1 r2) "second occurence"
+{-# NOINLINE errorDuplicateBranch #-}
 
 -- TODO: Is this error message still up-to date? This "import/builtin shadowed"
 -- stuff feels outdated now that we have the module system.
 errorImportShadowed :: SrcRange -> D.Diagnostic
 errorImportShadowed range =
-  D.err
-    range
-    "import/builtin shadowed"
-    "declaration shadows import/builtin of the same name"
+  D.err "import/builtin shadowed"
+    & D.primary range "declaration shadows import/builtin of the same name"
 {-# NOINLINE errorImportShadowed #-}
 
 -- | An warning message for when a lambda binds only type variables but uses
@@ -543,43 +538,48 @@ errorImportShadowed range =
 -- not allow it.
 errorNoTermLinLambda :: SrcRange -> SrcRange -> D.Diagnostic
 errorNoTermLinLambda absRange arrRange =
-  D.warn arrRange "unnecessary linear arrow" "linear arrow does not make sense"
+  D.warn "unnecessary linear arrow"
+    & D.fix arrRange ("prefer an unrestricted arrow" <+> D.syntax "->")
     & D.context absRange "lambda abstraction binds only type variables"
-    & D.hint "Use an unrestricted arrow for this case."
 {-# NOINLINE errorNoTermLinLambda #-}
 
-errorRecNoTermLambda :: SrcRange -> SrcRange -> SrcRange -> D.Diagnostic
-errorRecNoTermLambda fullExpr recToken recExpr =
-  D.err fullExpr "" "invalid ‘rec’ expression"
-    & D.context recToken "‘rec’ expression started here"
-    & D.context recExpr "invalid ‘rec’ right-hand side expression"
-    & D.note note1
-    & D.note note2
+errorRecBadRhsLambda :: SrcRange -> SrcRange -> PExp -> D.Diagnostic
+errorRecBadRhsLambda fullExpr _recToken recExpr =
+  D.err "invalid ‘rec’ expression"
+    & D.primary (getRange recExpr) msg
+    & D.primary fullExpr ("this" <+> srec <+> "expression")
+    & D.hint hint
   where
-    note1 =
-      "a ‘rec’ expression's right-hand side must consist of a lambda \
-      \abstraction."
-    note2 =
-      "a ‘rec’ expression must bind at least one non-type parameter in \
-      \their right-hand side lambda abstraction."
-{-# NOINLINE errorRecNoTermLambda #-}
+    (msg, hint) = case recExpr of
+      E.TypeAbs {} ->
+        ( msgPrefix <+> "binds only type variables",
+          hintPrefix <+> "bind at least one term variable."
+        )
+      _ ->
+        ( msgPrefix <+> "is not a lambda abstraction",
+          hintPrefix <+> "consist of a lambda abstraction binding a term variable."
+        )
+    srec = D.syntax "rec"
+    msgPrefix = srec <+> "right-hand side"
+    hintPrefix = "a" <+> srec <+> "expression's right-hand side must"
+{-# NOINLINE errorRecBadRhsLambda #-}
 
 errorMultipleWildcards ::
   E.CaseBranch Identity Parse -> E.CaseBranch Identity Parse -> D.Diagnostic
 errorMultipleWildcards (getRange -> x) (getRange -> y) =
-  D.err
-    (min x y)
-    "multiple wildcard branches in case expression"
-    "here is the first wildcard branch"
-    & D.context (max x y) "here is the second wildcard branch"
+  D.err "multiple wildcard branches in case expression"
+    & D.primary (min x y) "first occurence"
+    & D.context (max x y) "second occurence"
+{-# NOINLINE errorMultipleWildcards #-}
 
 errorMisplacedPairCon :: forall (s :: Scope). (SingI s) => SrcRange -> D.Diagnostic
 errorMisplacedPairCon loc =
-  D.err loc "misplaced pair constructor" msg
+  D.err "misplaced pair constructor"
+    & D.primary loc msg
     & D.hint "Use the ‘(…, …)’ form when outside of patterns and ‘select’"
   where
     msg =
-      eitherName @s @String
+      eitherName @s @D.Doc
         "cannot appear as a type constructor"
         "cannot appear as an expression"
 {-# NOINLINE errorMisplacedPairCon #-}
@@ -591,25 +591,30 @@ errorConflictingImports ::
   Located ImportBehaviour ->
   D.Diagnostic
 errorConflictingImports importLoc (_scope, _name) i1 i2 =
-  D.err importLoc "conflicting imports" "conflicting imports"
+  D.err "conflicting imports"
     & describe i1
     & describe i2
+    & D.context importLoc "import is here"
   where
-    describe (r :@ i) = D.context r case i of
+    describe (r :@ i) = D.primary r case i of
       ImportHide -> "hidden here"
       ImportAsIs -> "imported here"
       ImportFrom _ -> "imported as a renaming here"
 {-# NOINLINE errorConflictingImports #-}
 
 errorInvalidKind :: SrcRange -> D.Diagnostic
-errorInvalidKind r = D.err r "invalid kind" "not one of the valid kinds"
+errorInvalidKind r =
+  D.err "invalid kind"
+    & D.primary r "not one of the valid kinds"
 {-# NOINLINE errorInvalidKind #-}
 
 errorUnexpectedTokens :: Token -> Parser a
-errorUnexpectedTokens t@TokenEof {} = do
-  fatalError $ D.err (getRange t) "parse error" "unexpected end of file"
-errorUnexpectedTokens t = do
-  fatalError $ D.err (getRange t) "parse error" "unexpected token"
+errorUnexpectedTokens t = fatalError do
+  let description = case t of
+        TokenEof {} -> "unexpected end of file"
+        _ -> "unexpected token"
+  D.err "parse error"
+    & D.primary (getRange t) description
 {-# NOINLINE errorUnexpectedTokens #-}
 
 skippingNLs :: Parser a -> Parser a
@@ -617,9 +622,9 @@ skippingNLs (Parser m) = Parser do
   local (_1 .~ NLSkipAll) m
 
 errorUnknownPragma :: SrcRange -> SrcRange -> D.Diagnostic
-errorUnknownPragma pragmaRange keywordRange =
-  D.err pragmaRange "invalid pragma" "unknown pragma directive"
-    & D.fix keywordRange "try ‘BENCHMARK’ or ‘BENCHMARK!’"
+errorUnknownPragma _pragmaRange keywordRange =
+  D.err "invalid pragma"
+    & D.fix keywordRange "unknown pragma kind, try ‘BENCHMARK’ or ‘BENCHMARK!’"
 
 scanToken :: (Token -> Parser a) -> Parser a
 scanToken k = Parser ask >>= \(nlp, lf) -> runLexFn (lf nlp) k

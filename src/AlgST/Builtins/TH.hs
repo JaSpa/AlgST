@@ -20,7 +20,6 @@ import Control.Monad.Validate
 import Data.Foldable
 import Language.Haskell.TH hiding (Name)
 import Language.Haskell.TH.CodeDo qualified as Code
-import Prettyprinter qualified as P
 import Prettyprinter.Render.String qualified as P
 
 parseTH ::
@@ -62,7 +61,6 @@ reportDiagnostics :: (Foldable t) => SourceManager -> t D.Diagnostic -> Q ()
 reportDiagnostics mgr =
   toList
     >>> D.buildSorted mgr
-    >>> D.prettyDiagnostic D.WithUnicode (D.TabSize 2)
-    >>> P.layoutPretty P.defaultLayoutOptions
+    >>> D.layoutDiagnostic D.WithUnicode (Just 80)
     >>> P.renderString
     >>> reportError

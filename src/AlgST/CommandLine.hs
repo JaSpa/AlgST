@@ -6,7 +6,8 @@ module AlgST.CommandLine
     RunOpts (..),
     Source (..),
     Query (..),
-    actionSource,
+    queryFlag,
+    queryData,
   )
 where
 
@@ -46,19 +47,27 @@ sourceParser = O.optional $ givePath <|> searchMain
     decideInput "-" = SourceStdin
     decideInput fp = SourceFile fp
 
-data Query
-  = QueryTySynth !String
-  | QueryKiSynth !String
-  | QueryNF !String
+data Query a
+  = QueryTySynth a
+  | QueryKiSynth a
+  | QueryNF a
   deriving (Show)
 
-actionSource :: Query -> String
-actionSource = \case
-  QueryTySynth s -> s
-  QueryKiSynth s -> s
-  QueryNF s -> s
+-- | Returns the flag name for the given kind of query.
+queryFlag :: Query a -> String
+queryFlag = \case
+  QueryTySynth _ -> "--type"
+  QueryKiSynth _ -> "--kind"
+  QueryNF _ -> "--nf"
 
-queryParser :: O.Parser Query
+-- | Returns the query data @a@ stored inside a @'Query' a@.
+queryData :: Query a -> a
+queryData = \case
+  QueryTySynth a -> a
+  QueryKiSynth a -> a
+  QueryNF a -> a
+
+queryParser :: O.Parser (Query String)
 queryParser = tysynth <|> kisynth <|> nf
   where
     synthHelp x y =
@@ -97,7 +106,7 @@ data RunOpts = RunOpts
   { optsSource :: !(Maybe Source),
     optsOutputMode :: !(Maybe OutputMode),
     optsQuiet :: !Bool,
-    optsQueries :: ![Query],
+    optsQueries :: ![Query String],
     optsDoEval :: !Bool,
     optsDebugEval :: !Bool,
     optsBufferSize :: !Natural,
