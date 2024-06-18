@@ -20,7 +20,6 @@ import AlgST.Typing.Monad
 import AlgST.Typing.Phase
 import AlgST.Util
 import AlgST.Util.Diagnose qualified as D
-import AlgST.Util.ErrorMessage hiding (Errors)
 import AlgST.Util.Generically
 import AlgST.Util.Operators
 import AlgST.Util.SourceLocation
@@ -48,9 +47,6 @@ fatal !e = refute $ This $ DNE.singleton e
 
 ifNothing :: (MonadValidate Errors m) => D.Diagnostic -> Maybe a -> m a
 ifNothing e = maybe (fatal e) pure
-
-toNewDiagnostic :: Diagnostic -> D.Diagnostic
-toNewDiagnostic = error "toNewDiagnostic"
 
 unexpectedKind :: (T.ForallX HasRange x) => T.Type x -> K.Kind -> [K.Kind] -> D.Diagnostic
 unexpectedKind t kind hintKinds =

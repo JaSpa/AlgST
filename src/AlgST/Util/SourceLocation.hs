@@ -49,22 +49,14 @@ module AlgST.Util.SourceLocation
     foldL,
     uncurryL,
     (@-),
-
-    -- * Pos transition
-    needRange,
-    needPos,
-    needLoc,
-    needPLoc,
   )
 where
 
-import AlgST.Syntax.Pos qualified as P
 import AlgST.Util
 import AlgST.Util.Generically
 import Control.Foldl.NonEmpty qualified as L1
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal (ByteString (..))
-import Data.CallStack (HasCallStack)
 import Data.Coerce
 import Data.Hashable
 import Data.Profunctor
@@ -312,19 +304,3 @@ onUnL f (_ :@ x) (_ :@ y) = f x y
 
 (@-) :: (HasRange p) => p -> a -> Located a
 p @- a = getRange p :@ a
-
-needPos :: (HasCallStack) => a -> P.Pos
-needPos = undefined
-{-# WARNING needPos "compat placeholder" #-}
-
-needRange :: (HasCallStack) => a -> SrcRange
-needRange = undefined
-{-# DEPRECATED needRange "compat placeholder" #-}
-
-needLoc :: (HasCallStack) => P.Located a -> Located a
-needLoc = undefined
-{-# DEPRECATED needLoc "compat placeholder" #-}
-
-needPLoc :: (HasCallStack) => Located a -> P.Located a
-needPLoc = undefined
-{-# DEPRECATED needPLoc "compat placeholder" #-}

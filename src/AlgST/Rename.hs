@@ -178,15 +178,15 @@ importAllEnv loc targetName targetMap qualifier =
           (Error.AmbiguousImport loc targetName)
 
 instance SynTraversal RnM Parse Rn where
-  typeVariable _ x = fmap (T.Var x) . lookupName Error.Var (needRange x)
-  valueVariable _ x = fmap (E.Var x) . lookupName Error.Var (needRange x)
+  typeVariable _ x = fmap (T.Var x) . lookupName Error.Var (getRange x)
+  valueVariable _ x = fmap (E.Var x) . lookupName Error.Var (getRange x)
   bind _ vs = withBindings \f -> traverse f vs
 
   useConstructor _ loc w = case singByProxy w of
     -- Special check for value constructors: We have to resolve `(,)` to
     -- `conPair`.
     SValues | w == nameWritten Builtin.conPair -> pure Builtin.conPair
-    _ -> lookupName Error.Con (needRange loc) w
+    _ -> lookupName Error.Con loc w
 
   exprExtension pxy = \case
     Left parsedBuiltin ->
