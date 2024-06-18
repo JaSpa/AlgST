@@ -30,6 +30,7 @@ resolver: lts-24.31
 #   - wai
 packages:
   - .
+  - ./prettyprinter-ansi-terminal-1.1.3
 
 # Dependency packages to be pulled from upstream that are not in the resolver.
 # These entries can reference officially published versions as well as
