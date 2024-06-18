@@ -309,7 +309,7 @@ Decl :: { ModuleBuilder }
 TySig :: { PType }
   : ':' Type     { $2 }
 
-TypeParams :: { [Located (TypeVar PStage, K.Kind)] }
+TypeParams :: { Params PStage }
   : {- empty -}   { [] }
   | TypeParams1   { toList $1 }
 

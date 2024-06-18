@@ -113,9 +113,6 @@ import Lens.Family2
 import Lens.Family2.State.Strict
 import Lens.Family2.Stock (at')
 
-needPParams :: Params x -> [(Located (Name stage Types), K.Kind)]
-needPParams = undefined
-
 -- | Translates the typechecker specific error set representation into a simple
 -- list.
 runErrors :: Errors -> D.DErrors
@@ -551,10 +548,10 @@ zipTypeParams ::
   Params TcStage ->
   [RnType] ->
   TcM env st [(TypeVar TcStage, TcType)]
-zipTypeParams loc name ps0 ts0 = go 0 (needPParams ps0) ts0
+zipTypeParams loc name ps0 ts0 = go 0 ps0 ts0
   where
     go !_ [] [] = pure []
-    go !n ((_ :@ v, k) : ps) (a : as) =
+    go !n (_ :@ (v, k) : ps) (a : as) =
       liftA2
         (:)
         ((v,) <$> kicheck a k)
@@ -953,7 +950,7 @@ instantiateDeclRef p name decl = do
         { typeRefName = name,
           typeRefKind = tcDeclKind decl,
           typeRefExcl = mempty,
-          typeRefArgs = (\(p :@ tv, k) -> T.Var (p @- k) tv) <$> needPParams params,
+          typeRefArgs = (\(p :@ (tv, k)) -> T.Var (p @- k) tv) <$> params,
           typeRefNameRange = p
         }
     )
@@ -1035,10 +1032,10 @@ checkDataCase loc cases patTy mExpectedTy =
 -- | Combines a list of @('TypeVar', 'K.Kind')@ pairs into a nested 'T.Forall'
 -- type.
 buildForallType :: Params TcStage -> TcType -> TcType
-buildForallType = needPParams >>> foldMap (Endo . mkForall) >>> appEndo
+buildForallType = foldMap (Endo . mkForall) >>> appEndo
   where
-    mkForall :: (Located (TypeVar TcStage), K.Kind) -> TcType -> TcType
-    mkForall (p :@ tv, k) = T.Forall NullRange . K.Bind p tv k
+    mkForall :: Located (TypeVar TcStage, K.Kind) -> TcType -> TcType
+    mkForall (p :@ (tv, k)) = T.Forall NullRange . K.Bind p tv k
 
 buildDataConType ::
   SrcRange ->

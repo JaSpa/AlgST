@@ -70,7 +70,7 @@ type XParams x = Params (XStage x)
 
 type Params stage = [Located (Name stage Types, K.Kind)]
 
-traverseParams :: Applicative f => (Name stage Types -> f a) -> Params stage -> f [Located (a, K.Kind)]
+traverseParams :: (Applicative f) => (Name stage Types -> f a) -> Params stage -> f [Located (a, K.Kind)]
 traverseParams f = traverse (traverse (bitraverse f pure))
 
 type Constructors stage a = NameMapG stage Values (SrcRange, [a])
@@ -81,7 +81,7 @@ mapConstructors ::
 mapConstructors f = runIdentity . traverseConstructors (\k -> Identity . f k)
 
 traverseConstructors ::
-  Applicative f =>
+  (Applicative f) =>
   (ProgVar stage -> a -> f b) ->
   (Constructors stage a -> f (Constructors stage b))
 traverseConstructors f = Map.traverseWithKey (traverse . traverse . f)
@@ -120,7 +120,7 @@ declConstructors name d = case d of
     let con (r, items) = ProtocolCon @x r name (declParams d) items
     Map.map con (nominalConstructors decl)
 
-instance ForallDeclX HasRange x => HasRange (TypeDecl x) where
+instance (ForallDeclX HasRange x) => HasRange (TypeDecl x) where
   getRange = \case
     AliasDecl x _ -> getRange x
     DataDecl x _ -> getRange x
@@ -183,7 +183,7 @@ conItems = \case
   DataCon _ _ _ _ ts -> ts
   ProtocolCon _ _ _ ts -> ts
 
-instance ForallConX HasRange x => HasRange (ConstructorDecl x) where
+instance (ForallConX HasRange x) => HasRange (ConstructorDecl x) where
   getRange = \case
     DataCon x _ _ _ _ -> getRange x
     ProtocolCon x _ _ _ -> getRange x
