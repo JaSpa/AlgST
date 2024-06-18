@@ -61,6 +61,6 @@ reportDiagnostics :: (Foldable t) => SourceManager -> t D.Diagnostic -> Q ()
 reportDiagnostics mgr =
   toList
     >>> D.buildSorted mgr
-    >>> D.layoutDiagnostic D.WithUnicode (Just 80)
+    >>> D.layoutDiagnostic D.WithUnicode (D.AvailablePerLine 80 1.0)
     >>> P.renderString
     >>> reportError

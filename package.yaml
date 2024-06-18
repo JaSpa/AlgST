@@ -45,6 +45,7 @@ dependencies:
 - singletons-th
 - stm
 - template-haskell
+- terminal-size
 - text
 - th-lift-instances
 - these

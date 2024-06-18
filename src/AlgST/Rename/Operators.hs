@@ -6,6 +6,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE ViewPatterns #-}
@@ -59,7 +60,7 @@ noTypeArgs :: ResolvedOp -> Bool
 noTypeArgs (opExpr -> E.Var {}) = True
 noTypeArgs _ = False
 
-operatorBaseName :: HasCallStack => RnExp -> RnName Values
+operatorBaseName :: (HasCallStack) => RnExp -> RnName Values
 operatorBaseName (E.Var _ n) = n
 operatorBaseName (E.TypeApp _ e _) = operatorBaseName e
 operatorBaseName e = error $ "internal error: expression is not an operator ‘" ++ show e ++ "’"
@@ -67,7 +68,7 @@ operatorBaseName e = error $ "internal error: expression is not an operator ‘"
 rewriteOperatorSequence :: UnresolvedSeq h -> RnM RnExp
 rewriteOperatorSequence = traverse resolveOperator >=> foldGroupedOperators
 
-resolveOperator :: D.MonadErrors m => Unresolved -> m ResolvedOp
+resolveOperator :: (D.MonadErrors m) => Unresolved -> m ResolvedOp
 resolveOperator op = do
   let name = operatorBaseName op
   (prec, assoc) <-
@@ -82,10 +83,8 @@ resolveOperator op = do
       }
   where
     unknownOpErr =
-      D.err
-        (getRange op)
-        "unknown operator"
-        "operator has no associativity/precedence information"
+      D.err "unknown operator"
+        & D.primary (getRange op) "operator has no associativity/precedence information"
 
 data Prec = MinPrec | Prec !Precedence | MaxPrec
   deriving (Eq, Ord, Show)
@@ -223,10 +222,8 @@ select side = either const (const id) . side
 
 errorUnsupportedRightSection :: ResolvedOp -> D.Diagnostic
 errorUnsupportedRightSection op =
-  D.err
-    (getRange op)
-    "unsupported right section"
-    "operator is missing its left operand"
+  D.err "unsupported right section"
+    & D.primary (getRange op) "operator is missing its left operand"
     & D.note "Right sections are not yet supported."
     & D.hint "Write an explicit lambda abstraction."
 {-# NOINLINE errorUnsupportedRightSection #-}
@@ -234,10 +231,8 @@ errorUnsupportedRightSection op =
 errorNonAssocOperators :: ResolvedOp -> ResolvedOp -> D.Diagnostic
 errorNonAssocOperators v1 v2 =
   -- TODO: can we include the outer arguments in the range?
-  D.err
-    (v1 `runion` v2)
-    "associativity conflict"
-    "non-associative operators with equal precedence are used next to each other"
+  D.err "associativity conflict"
+    & D.primary (v1 `runion` v2) "non-associative operators with equal precedence are used next to each other"
     & D.context (getRange v1 `min` getRange v2) "operator #1"
     & D.context (getRange v1 `max` getRange v2) "operator #2"
     & parensHint
@@ -245,10 +240,8 @@ errorNonAssocOperators v1 v2 =
 
 errorPrecConflict :: SrcRange -> ResolvedOp -> ResolvedOp -> D.Diagnostic
 errorPrecConflict sectionRange secOp otherOp =
-  D.err
-    sectionRange
-    "precedence conflict"
-    "the operator of a section must have lower predence than its operand"
+  D.err "precedence conflict"
+    & D.primary sectionRange "the operator of a section must have lower predence than its operand"
     & D.context (getRange otherOp) "this operator has higher precedence"
     & D.context (getRange secOp) "than this section operator"
     & parensHint

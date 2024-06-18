@@ -302,7 +302,7 @@ applyTypeCon ::
   [RnType] ->
   TcM env st (TcType, K.Kind)
 applyTypeCon conRange name con protoSub args = case con of
-  NominalTypeCon params kind -> do
+  NominalTypeCon params kind protoCons -> do
     subs <- zipTypeParams conRange name params args
     let typeRef =
           TypeRef

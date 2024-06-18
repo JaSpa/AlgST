@@ -38,6 +38,7 @@ module AlgST.Util.Diagnose
     -- ** Rendering the @diagnose@ values
     layoutDiagnostic,
     E.WithUnicode (..),
+    P.PageWidth (..),
 
     -- * @MonadValidate@ integration
     MonadErrors,
@@ -244,15 +245,11 @@ fix r = pushMarker r . E.Maybe
 showRange :: SrcRange -> Diagnostic -> Diagnostic
 showRange r = pushMarker r E.Blank
 
-layoutDiagnostic :: E.WithUnicode -> Maybe Int -> BaseDiagnostic -> P.SimpleDocStream P.AnsiStyle
+layoutDiagnostic :: E.WithUnicode -> P.PageWidth -> BaseDiagnostic -> P.SimpleDocStream P.AnsiStyle
 layoutDiagnostic unicode width =
   E.prettyDiagnostic' unicode (E.TabSize 2)
-    >>> P.layoutPretty layoutOpts
+    >>> P.layoutPretty (P.LayoutOptions width)
     >>> P.reAnnotateS style
-  where
-    layoutOpts = case width of
-      Nothing -> P.LayoutOptions {P.layoutPageWidth = P.Unbounded}
-      Just wd -> P.LayoutOptions {P.layoutPageWidth = P.AvailablePerLine wd 1}
 
 data Ann
   = -- | The annotated part is a piece of syntax

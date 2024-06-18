@@ -6,7 +6,6 @@ import AlgST.Driver qualified as Driver
 import AlgST.Driver.Output
 import AlgST.Syntax.Name
 import AlgST.Typing.Phase (Tc)
-import AlgST.Util.Output
 import Data.HashMap.Internal.Strict (HashMap)
 
 #ifdef ALGST_BENCHMARKER
@@ -33,17 +32,16 @@ enabled =
 -- | Run the benchmarks and write the result to the given file path.
 run ::
   OutputHandle ->
-  OutputMode ->
   FilePath ->
   HashMap ModuleName (Driver.Result Tc) ->
   IO Bool
 
 #ifdef ALGST_BENCHMARKER
 
-run outH outMode fp modules
+run outH fp modules
   | null benchmarks = do
       let msg = "Benchmarks requested but Main module does not specify any."
-      outputError outH outMode msg
+      outputError outH msg
       pure False
   | otherwise = do
       -- Truncate the CSV file before running the benchmarks. Gauge only ever appends.
@@ -69,7 +67,7 @@ run outH outMode fp modules
 -- ALGST_BENCHMARKER
 #else
 
-run _ _ _ _ = do
+run _ _ _ = do
   pure False
 
 -- ALGST_BENCHMARKER

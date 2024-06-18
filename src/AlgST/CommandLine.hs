@@ -1,4 +1,7 @@
 {-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module AlgST.CommandLine
@@ -12,15 +15,20 @@ module AlgST.CommandLine
 where
 
 import AlgST.Benchmark qualified as Bench
+import AlgST.Driver.Output (OutputSettings (..))
 import AlgST.Interpret qualified as I
-import AlgST.Util.Output
 import Control.Applicative
+import Control.Monad
+import Data.Foldable.WithIndex
+import Data.Functor.WithIndex
 import Data.Sequence (Seq)
 import Data.Sequence qualified as Seq
+import Data.Traversable.WithIndex
 import Data.Version
 import Numeric.Natural (Natural)
 import Options.Applicative qualified as O
 import Paths_AlgST
+import Prettyprinter
 
 data Source
   = SourceFile !FilePath
@@ -51,7 +59,14 @@ data Query a
   = QueryTySynth a
   | QueryKiSynth a
   | QueryNF a
-  deriving (Show)
+  deriving (Show, Functor, Foldable, Traversable)
+
+instance FunctorWithIndex (Query ()) Query
+
+instance FoldableWithIndex (Query ()) Query
+
+instance TraversableWithIndex (Query ()) Query where
+  itraverse f q = traverse (f (void q)) q
 
 -- | Returns the flag name for the given kind of query.
 queryFlag :: Query a -> String
@@ -104,7 +119,6 @@ queryParser = tysynth <|> kisynth <|> nf
 
 data RunOpts = RunOpts
   { optsSource :: !(Maybe Source),
-    optsOutputMode :: !(Maybe OutputMode),
     optsQuiet :: !Bool,
     optsQueries :: ![Query String],
     optsDoEval :: !Bool,
@@ -114,7 +128,8 @@ data RunOpts = RunOpts
     optsDriverSeq :: !Bool,
     optsDriverDeps :: !Bool,
     optsDriverModSearch :: !Bool,
-    optsBenchmarksOutput :: !(Maybe FilePath)
+    optsBenchmarksOutput :: !(Maybe FilePath),
+    optsOutputSettings :: !OutputSettings
   }
   deriving (Show)
 
@@ -126,7 +141,7 @@ optsParser = do
   optsBufferSize <- evalBufSizeParser
   optsDebugEval <- evalVerboseParser
   optsQueries <- many queryParser
-  optsOutputMode <- optional modeParser
+  optsOutputSettings <- outputSettingsParser
   optsQuiet <- quietParser
   optsDriverSeq <- driverSeqParser
   optsDriverDeps <- driverDepsParser
@@ -148,11 +163,14 @@ benchmarksOutParser
     disabledError =
       O.ErrorMsg "AlgST benchmarker is not enabled in this build."
 
-modeParser :: O.Parser OutputMode
-modeParser = plain <|> colorized
+outputSettingsParser :: O.Parser OutputSettings
+outputSettingsParser = do
+  forceDoAnsi <- optional $ plain <|> colorized
+  forceOutputWidth <- optional width
+  pure OutputSettings {..}
   where
     plain =
-      O.flag' Plain $
+      O.flag' False $
         mconcat
           [ O.long "plain",
             O.short 'p',
@@ -160,7 +178,7 @@ modeParser = plain <|> colorized
             O.hidden
           ]
     colorized =
-      O.flag' Colorized $
+      O.flag' True $
         mconcat
           [ O.long "colors",
             O.help
@@ -168,6 +186,18 @@ modeParser = plain <|> colorized
               \not a terminal.",
             O.hidden
           ]
+    width =
+      fmap toPageWidth . O.option O.auto . mconcat $
+        [ O.long "output-width",
+          O.help
+            "Output diagnostics wrapped to the given terminal width. Auto \
+            \discovered, if possible. Use a non-positive value for unbounded \
+            \width.",
+          O.hidden
+        ]
+    toPageWidth w
+      | w > 0 = AvailablePerLine w 1.0
+      | otherwise = Unbounded
 
 quietParser :: O.Parser Bool
 quietParser =

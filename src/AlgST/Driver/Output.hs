@@ -18,6 +18,9 @@ module AlgST.Driver.Output
     -- ** Creating dynamic handles
     withOutput,
     captureOutput,
+    captureOutputWithSettings,
+    OutputSettings (..),
+    defaultOutputSettings,
 
     -- ** Writing to an @OutputHandle@
     outputStr,
@@ -25,6 +28,7 @@ module AlgST.Driver.Output
     outputShow,
     outputLnS,
     outputS,
+    outputDoc,
     outputError,
 
     -- ** Sticky messages
@@ -50,7 +54,6 @@ module AlgST.Driver.Output
 where
 
 import AlgST.Util.Lenses
-import AlgST.Util.Output
 import Control.Category ((>>>))
 import Control.Concurrent
 import Control.Concurrent.Async (Async)
@@ -65,8 +68,16 @@ import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe
 import Data.Monoid
+import Data.Text qualified as T
+import Data.Text.Lazy qualified as TL
 import Lens.Family2
+import Prettyprinter
+import Prettyprinter.Render.String
+import Prettyprinter.Render.Terminal
+import Prettyprinter.Render.Terminal qualified as Term
+import Prettyprinter.Render.Text qualified as Text
 import System.Console.ANSI qualified as ANSI
+import System.Console.Terminal.Size qualified as Term
 import System.IO
 import System.IO.Unsafe (unsafeDupablePerformIO)
 
@@ -75,38 +86,72 @@ newtype Sticky = Sticky String
 emptySticky :: Sticky
 emptySticky = Sticky ""
 
-newtype OutputHandle = OutputHandle ActionBuffer
+data OutputSettings = OutputSettings
+  { forceDoAnsi :: !(Maybe Bool),
+    forceOutputWidth :: !(Maybe PageWidth)
+  }
+  deriving (Show)
 
-instance Show OutputHandle where
-  show = \case
-    OutputHandle NullBuffer -> "nullHandle"
-    OutputHandle _ -> "OutputHandle{}"
+defaultOutputSettings :: OutputSettings
+defaultOutputSettings =
+  OutputSettings
+    { forceDoAnsi = Nothing,
+      forceOutputWidth = Nothing
+    }
+
+data OutputHandle = OutputHandle
+  { outputBuffer :: !ActionBuffer,
+    outputWidth :: !PageWidth
+  }
+  deriving (Show)
 
 -- | An output handle which discards all messages.
 nullHandle :: OutputHandle
-nullHandle = OutputHandle $ unsafeDupablePerformIO $ newActionBufferIO 0
+nullHandle =
+  OutputHandle
+    { outputBuffer = unsafeDupablePerformIO $ newActionBufferIO 0,
+      outputWidth = Unbounded
+    }
 {-# NOINLINE nullHandle #-}
 
 -- | Checks wether the given handle discards all messages, such as
 -- 'nullHandle'.
 isNullHandle :: OutputHandle -> Bool
-isNullHandle (OutputHandle NullBuffer) = True
+isNullHandle OutputHandle {outputBuffer = NullBuffer} = True
 isNullHandle _ = False
 
 -- | Captures the output written to the 'OutputHandle' provided in the nested
 -- computation.
 --
 -- The 'OutputHandle' provided to the sub-computation must not be used once the
--- it returns.
+-- subcomputation returns.
+--
+-- The 'OutputSettings' applied to messages written to the 'OutputHandle'
+-- disable all colors and allow for an unlimited 'PageWidth'. Use
+-- 'captureOutputWithSettings' to specify custom 'OutputSettings'.
 captureOutput :: (MonadUnliftIO m) => (OutputHandle -> m a) -> m (String, a)
-captureOutput = withAsyncOutput runOutputCollect
+captureOutput = captureOutputWithSettings defaultOutputSettings
+
+-- | Captures the output written to the 'OutputHandle' provided in the nested
+-- computation.
+--
+-- The 'OutputHandle' provided to the sub-computation must not be used once the
+-- it returns.
+--
+-- The 'OutputSettings' can be used to allow colorized output and to limit the
+-- 'PageWidth' (the default is 'Unlimited'). Sticky messages are always
+-- disabled.
+captureOutputWithSettings :: (MonadUnliftIO m) => OutputSettings -> (OutputHandle -> m a) -> m (String, a)
+captureOutputWithSettings settings =
+  withAsyncOutput (pure $ forceOutputWidth settings) do
+    runOutputCollect $ False `fromMaybe` forceDoAnsi settings
 
 -- | Writes all output written to the 'OutputHandle' to the provided 'Handle'.
 --
 -- The 'OutputHandle' provided to the sub-computation must not be used once the
 -- it returns.
-withOutput :: (MonadUnliftIO m) => Bool -> Handle -> (OutputHandle -> m a) -> m a
-withOutput !allowAnsi h = fmap snd <$> withAsyncOutput (runOutputHandle allowAnsi h)
+withOutput :: (MonadUnliftIO m) => OutputSettings -> Handle -> (OutputHandle -> m a) -> m a
+withOutput settings h = fmap snd <$> withAsyncOutput (detectOutputWidth settings h) (runOutputHandle settings h)
 
 -- | An exception thrown by the consumer of a 'OutputHandle'.
 newtype OutputException = OutputException SomeException
@@ -178,10 +223,12 @@ withScopedLink target m = do
         -- A successfull results indicates termination.
         Right _ -> pure ()
 
-withAsyncOutput :: (MonadUnliftIO m) => (ActionBuffer -> IO a) -> (OutputHandle -> m b) -> m (a, b)
-withAsyncOutput consumer producer =
+withAsyncOutput :: (MonadUnliftIO m) => IO (Maybe PageWidth) -> (ActionBuffer -> IO a) -> (OutputHandle -> m b) -> m (a, b)
+withAsyncOutput getPageWidth consumer producer =
   -- Retrieve the necessary information to run `m` actions inside `IO`.
   askRunInIO >>= \runIO -> liftIO do
+    -- Decide on the width of the terminal.
+    pageWidth <- fromMaybe Unbounded <$> getPageWidth
     -- Create the output buffer. (The buffer size of 32 has been chosen
     -- semi-randomly.)
     buf <- newActionBufferIO 32
@@ -190,7 +237,7 @@ withAsyncOutput consumer producer =
       -- Run the producer. If the consumer raises any exceptions during that
       -- time they will be forwarded to us.
       let linkedProducer = withScopedLink outputThread do
-            runIO (producer (OutputHandle buf))
+            runIO (producer OutputHandle {outputBuffer = buf, outputWidth = pageWidth})
       b <-
         linkedProducer `finally` do
           -- Signal the consumer the end.
@@ -207,6 +254,10 @@ withAsyncOutput consumer producer =
         Left e -> throwIO (OutputException e)
         Right a -> pure (a, b)
 
+detectOutputWidth :: OutputSettings -> Handle -> IO (Maybe PageWidth)
+detectOutputWidth OutputSettings {forceOutputWidth = Just wd} _ = pure (Just wd)
+detectOutputWidth _ h = fmap (\w -> AvailablePerLine (Term.width w) 1.0) <$> Term.hSize h
+
 outputStr :: (MonadIO m) => OutputHandle -> String -> m ()
 outputStr b = outputS b . showString
 
@@ -220,16 +271,19 @@ outputLnS :: (MonadIO m) => OutputHandle -> ShowS -> m ()
 outputLnS h s = outputS h (s . showChar '\n')
 
 outputS :: (MonadIO m) => OutputHandle -> ShowS -> m ()
-outputS (OutputHandle buf) =
+outputS OutputHandle {outputBuffer = buf} =
   liftIO . writeActionBuffer buf . WriteMessage
 
-outputError :: (MonadIO m) => OutputHandle -> OutputMode -> String -> m ()
-outputError out mode =
-  outputLnS out . applyStyle mode (styleFG ANSI.Red) . showString
+outputDoc :: (MonadIO m) => OutputHandle -> (PageWidth -> SimpleDocStream AnsiStyle) -> m ()
+outputDoc h d = liftIO $ writeActionBuffer (outputBuffer h) $ WriteDoc $! d $ outputWidth h
+
+outputError :: (MonadIO m) => OutputHandle -> String -> m ()
+outputError h s = outputDoc h \wd ->
+  layoutPretty (LayoutOptions wd) . annotate (Term.color Term.Red) $ pretty s
 
 -- | Replaces the current sticky message with the given string.
 outputSticky :: (MonadIO m) => OutputHandle -> String -> m ()
-outputSticky (OutputHandle buf) =
+outputSticky OutputHandle {outputBuffer = buf} =
   liftIO . writeActionBuffer buf . SetSticky . Sticky
 
 -- | Clears the current sticky message.
@@ -258,6 +312,10 @@ clearSticky h = outputSticky h ""
 
 -- | A bounded buffer of output actions.
 data ActionBuffer = ActionBuffer !Word !(TVar Word) !(TVar [Action])
+
+instance Show ActionBuffer where
+  show (ActionBuffer cap _ _) =
+    "ActionBuffer {capacity = " <> show cap <> "}"
 
 pattern NullBuffer :: ActionBuffer
 pattern NullBuffer <- ActionBuffer 0 _ _
@@ -296,7 +354,7 @@ readActionBufferRev (ActionBuffer cap capVar actVar) = do
 -- * @sticky@ is the new sticky message to write after the output.
 -- * @output@ is the output to write.
 -- * @done@ is 'True' if we should stop waiting for new messages.
-interpretRev :: Bool -> Sticky -> L.Fold Action (Sticky, ShowS, Bool)
+interpretRev :: Bool -> Sticky -> L.Fold Action (Sticky, ChunkList -> ChunkList, Bool)
 interpretRev !useSticky sticky0 =
   (,,)
     <$> ( if useSticky
@@ -310,8 +368,9 @@ interpretRev !useSticky sticky0 =
       SetSticky s -> Just s
       _ -> Nothing
     getMessage = \case
-      WriteMessage s -> Dual $ Endo s
-      SetSticky (Sticky s) | not useSticky -> Dual $ Endo $ showString s . showChar '\n'
+      WriteDoc d -> Dual $ Endo $ ChunkD d
+      WriteMessage s -> Dual $ Endo $ ChunkS s
+      SetSticky (Sticky s) | not useSticky -> Dual $ Endo $ ChunkS (showString s . showChar '\n')
       _ -> mempty
     isDone = \case
       Done -> True
@@ -323,13 +382,19 @@ mapMaybeL f (L.Fold step0 ini0 final0) = L.Fold step ini0 final0
   where
     step x = maybe x (step0 x) . f
 
+data ChunkList
+  = ChunkS ShowS ChunkList
+  | ChunkD (SimpleDocStream AnsiStyle) ChunkList
+  | ChunkFlush
+
 data Action
   = SetSticky Sticky
   | WriteMessage ShowS
+  | WriteDoc (SimpleDocStream AnsiStyle)
   | Done
 
-runOutputHandle :: Bool -> Handle -> ActionBuffer -> IO ()
-runOutputHandle allowAnsi h buf = bracket prepare id (const run)
+runOutputHandle :: OutputSettings -> Handle -> ActionBuffer -> IO ()
+runOutputHandle settings h buf = bracket prepare id (const run)
   where
     prepare :: IO (IO ())
     prepare = do
@@ -350,13 +415,19 @@ runOutputHandle allowAnsi h buf = bracket prepare id (const run)
     run = do
       -- If we are allowed to use ANSI escapes and the handle looks like it
       -- supports it we enable sticky messages.
-      useSticky <- (allowAnsi &&) <$> ANSI.hNowSupportsANSI h
-      runOutput (\_ -> writeChunk useSticky) () useSticky buf
+      useSticky <-
+        if forceDoAnsi settings == Just False
+          then pure False
+          else ANSI.hNowSupportsANSI h
+      useColors <- maybe (ANSI.hSupportsANSIColor h) pure (forceDoAnsi settings)
+      let docRender = (if useColors then Term.renderIO else Text.renderIO) h
+      runOutput (\_ -> writeChunk (clearCode useSticky) docRender) () useSticky buf
 
-    writeChunk :: Bool -> ShowS -> IO ()
-    writeChunk useSticky msg = do
-      hPutStr h $ clearCode useSticky $ msg ""
-      hFlush h
+    writeChunk :: ShowS -> (SimpleDocStream AnsiStyle -> IO ()) -> ChunkList -> IO ()
+    writeChunk prefix renderDoc = \case
+      ChunkS s rest -> writeChunk (prefix . s) renderDoc rest
+      ChunkD d rest -> hPutStr h (prefix "") *> renderDoc d *> writeChunk id renderDoc rest
+      ChunkFlush -> hPutStr h (prefix "")
 
     clearCode :: Bool -> ShowS
     clearCode True =
@@ -367,25 +438,33 @@ runOutputHandle allowAnsi h buf = bracket prepare id (const run)
       -- messages nothing has to be cleared.
       id
 
-runOutputCollect :: ActionBuffer -> IO String
-runOutputCollect buf = do
-  s <- runOutput (\s1 s2 -> pure (s1 . s2)) id False buf
+runOutputCollect :: Bool -> ActionBuffer -> IO String
+runOutputCollect !useColors buf = do
+  s <- runOutput writeChunks id False buf
   pure $ s ""
+  where
+    writeChunks s = \case
+      ChunkS c next -> writeChunks (s . c) next
+      ChunkD d next -> writeChunks (s . renderDoc d) next
+      ChunkFlush -> pure s
+    renderDoc
+      | useColors = renderShowS
+      | otherwise = TL.foldrChunks (\x y -> showString (T.unpack x) . y) id . Term.renderLazy
 
-runOutput :: forall s. (s -> ShowS -> IO s) -> s -> Bool -> ActionBuffer -> IO s
-runOutput writeChunk s0 !useSticky actBuffer = go s0 emptySticky
+runOutput :: forall s. (s -> ChunkList -> IO s) -> s -> Bool -> ActionBuffer -> IO s
+runOutput writeChunks s0 !useSticky actBuffer = go s0 emptySticky
   where
     go :: s -> Sticky -> IO s
     go !s prevSticky = do
       -- Read the next batch.
       acts <- atomically $ readActionBufferRev actBuffer
-      let (Sticky sticky, message, done) = L.fold (interpretRev useSticky prevSticky) acts
+      let (Sticky sticky, chunks, done) = L.fold (interpretRev useSticky prevSticky) acts
       -- Include a final newline if output is completed after this batch.
-      let stickyS
-            | done && not (null sticky) = showString sticky . showChar '\n'
-            | otherwise = showString sticky
+      let stickyFlush
+            | done && not (null sticky) = ChunkS (showString sticky . showChar '\n') ChunkFlush
+            | otherwise = ChunkS (showString sticky) ChunkFlush
       -- Write that batch to the output.
-      s' <- writeChunk s $ message . stickyS
+      s' <- writeChunks s $ chunks stickyFlush
       -- Continue with the next batch if we're not yet done.
       if done
         then pure s'

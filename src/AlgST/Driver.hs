@@ -73,9 +73,7 @@ import AlgST.Typing qualified as Tc
 import AlgST.Typing.Phase
 import AlgST.Util (plural)
 import AlgST.Util.Diagnose qualified as D
-import AlgST.Util.Error
 import AlgST.Util.Operators
-import AlgST.Util.Output
 import AlgST.Util.SourceManager
 import Algebra.Graph.AdjacencyMap.Algorithm qualified as G (Cycle)
 import Control.Applicative
@@ -102,12 +100,11 @@ import Data.List.NonEmpty qualified as NE
 import Data.Sequence (Seq (..))
 import Data.Sequence qualified as Seq
 import Data.Singletons
-import Data.Text.Lazy qualified as TL
 import Data.Tuple (Solo (..))
 import Error.Diagnose qualified as E
 import Lens.Family2 (view, (+~), (.~))
-import Prettyprinter.Render.String qualified as P
-import Prettyprinter.Render.Terminal qualified as Term
+import Prettyprinter qualified as Pr
+import Prettyprinter.Render.Terminal qualified as Pr
 import System.FilePath
 import System.IO.Error
 
@@ -119,7 +116,6 @@ data Settings = Settings
     driverVerboseDeps :: !Bool,
     driverDebugOutput :: !Bool,
     driverSequential :: !Bool,
-    driverOutputMode :: !OutputMode,
     driverOutputHandle :: !OutputHandle
   }
   deriving stock (Show)
@@ -189,7 +185,6 @@ defaultSettings =
       driverVerboseDeps = False,
       driverDebugOutput = False,
       driverSequential = False,
-      driverOutputMode = Plain,
       driverOutputHandle = nullHandle
     }
 
@@ -273,7 +268,7 @@ parseAllModules ::
   ModuleName -> Driver (DepsTree (Result Parse))
 parseAllModules firstName = do
   depsRef <- liftIO $ newIORef emptyDepsGraph
-  (outProgress, _) <- askOutputProgress
+  outProgress <- askOutputProgress
   counter <- newCounter outProgress do
     zeroCounter & counterTitleL .~ "Parsing..."
   parScheduled_ $ \scheduler -> do
@@ -281,17 +276,21 @@ parseAllModules firstName = do
   finalDeps <- liftIO $ readIORef depsRef
 
   let (acyclicDeps, cycles) = removeCycles finalDeps
-  (outVDeps, mode) <- askOutputVerbose driverVerboseDeps
-  let header :: String -> ShowS
-      header s =
-        applyStyle mode styleBold $
-          showString "== " . showString s . showString " ==\n"
-  let showDeps :: String -> DepsGraph cycles a -> ShowS
-      showDeps title dg =
-        header title . showString (exportTextual dg) . showChar '\n'
+
+  outVDeps <- askOutputVerbose driverVerboseDeps
+  let showDeps :: String -> DepsGraph cycles a -> Pr.Doc Pr.AnsiStyle
+      showDeps s dg =
+        Pr.vcat
+          [ Pr.annotate Pr.bold $ "== " <> Pr.pretty s <> " ==",
+            Pr.pretty (exportTextual dg)
+          ]
   let d1 = showDeps "Dependencies" finalDeps
   let d2 = showDeps "Acyclic Dependencies" acyclicDeps
-  outputS outVDeps $ if null cycles then d1 else d1 . d2
+  let ds
+        | null cycles = d1
+        | otherwise = Pr.vcat [d1, "", d2]
+  outputDoc outVDeps \width ->
+    Pr.layoutPretty (Pr.LayoutOptions width) ds
 
   for_ cycles $ reportErrors . MkSolo . cycleError
   pure acyclicDeps
@@ -365,7 +364,7 @@ renameAll ::
   DepsGraph Acyclic (Result Parse) ->
   Driver (DepsTree (Maybe (Result Rn)))
 renameAll dg = do
-  (outProgress, _) <- askOutputProgress
+  outProgress <- askOutputProgress
   counter <- newCounter outProgress do
     zeroCounter & counterOverallL .~ depsGraphSize dg
   parStrat <- askStrategy
@@ -416,7 +415,7 @@ checkAll ::
   DepsGraph Acyclic (Maybe (Result Rn)) ->
   Driver (DepsTree (Maybe (Result Tc)))
 checkAll dg = do
-  (outProgress, _) <- askOutputProgress
+  outProgress <- askOutputProgress
   counter <- newCounterStart outProgress do
     zeroCounter
       & counterOverallL .~ depsGraphSize dg
@@ -459,7 +458,7 @@ missingModuleError importRange name =
 -- 'True' additional debug messages will be output during the search.
 findModule :: ModuleName -> Driver (Maybe Buffer)
 findModule name = flip runContT pure do
-  (outVSearches, _) <- lift $ askOutputVerbose driverVerboseSearches
+  outVSearches <- lift $ askOutputVerbose driverVerboseSearches
   let searchMsg = outputStrLn outVSearches
   let !verbose = isNullHandle outVSearches
   liftIO $ searchMsg $ "Locating module ‘" ++ unModuleName name ++ "’"
@@ -541,7 +540,7 @@ noteDependencies depsRef name fp parsed = do
   let isUnparsed (_, m) = m /= name && not (depsMember m oldDeps)
   let newDeps = filter isUnparsed depList
 
-  (outVDeps, _) <- askOutputVerbose driverVerboseDeps
+  outVDeps <- askOutputVerbose driverVerboseDeps
   outputStrLn outVDeps do
     let !nOverall = length depList
         !nNew = length newDeps
@@ -608,11 +607,8 @@ reportErrors diags = when (not (null diags)) do
   -- Idea: look at the encoding of the output handle if the user didn't
   -- specify a flag forcing ASCII output.
   -- TODO: Take the maximum line width from the terminal.
-  let diagDoc = D.layoutDiagnostic D.WithUnicode (Just 80) baseDiag
-  (handle, mode) <- askOutputDiags
-  case mode of
-    Colorized -> outputStrLn handle $ TL.unpack $ Term.renderLazy diagDoc
-    Plain -> outputS handle $ P.renderShowS diagDoc . showChar '\n'
+  handle <- askOutputDiags
+  outputDoc handle \width -> D.layoutDiagnostic D.WithUnicode width baseDiag
 
 -- TODO: remove this function.
 reportModuleErrors :: (Foldable f) => ModuleName -> f D.Diagnostic -> Driver ()
@@ -623,11 +619,9 @@ reportModuleErrors _m = reportErrors
 -- This function returns the actual 'OutputHandle' unconditionally, as opposed
 -- to 'askOutputVerbose' or 'askOutputProgress'. We never want to hide
 -- diagnostic messages.
-askOutputDiags :: Driver (OutputHandle, OutputMode)
+askOutputDiags :: Driver OutputHandle
 askOutputDiags = asksState do
-  (,)
-    <$> driverOutputHandle . driverSettings
-    <*> driverOutputMode . driverSettings
+  driverOutputHandle . driverSettings
 
 -- | Either returns the drivers 'OutputHandle' or a 'nullHandle', depending
 -- wether the given function returns 'True'.
@@ -639,18 +633,16 @@ askOutputDiags = asksState do
 -- @
 --
 -- will return the associated handle if verbose searches are enabled.
-askOutputVerbose :: (Settings -> Bool) -> Driver (OutputHandle, OutputMode)
+askOutputVerbose :: (Settings -> Bool) -> Driver OutputHandle
 askOutputVerbose pred = asksState \DriverState {driverSettings = settings} ->
-  ( if pred settings
-      then driverOutputHandle settings
-      else nullHandle,
-    driverOutputMode settings
-  )
+  if pred settings
+    then driverOutputHandle settings
+    else nullHandle
 
 -- | Returns the output handle to be used for progress updates.
 --
 -- This returns a 'nullHandle' if the 'driverQuietProgress' is enabled.
-askOutputProgress :: Driver (OutputHandle, OutputMode)
+askOutputProgress :: Driver OutputHandle
 askOutputProgress = askOutputVerbose (not . driverQuietProgress)
 
 maybeCounter ::
