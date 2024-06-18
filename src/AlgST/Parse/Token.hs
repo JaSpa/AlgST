@@ -16,8 +16,6 @@
 module AlgST.Parse.Token where
 
 import AlgST.Syntax.Type (Polarity)
-import AlgST.Util.ErrorMessage
-import AlgST.Util.Output
 import AlgST.Util.SourceLocation
 import Control.Applicative
 import Data.DList qualified as DL
@@ -136,10 +134,6 @@ dropNewlines :: [Token] -> [Token]
 dropNewlines = filter \case
   TokenNL _ -> False
   _ -> True
-
-instance ErrorMsg Token where
-  msg = prettyToken
-  msgStyling _ = redFGStyling
 
 data TokenList = TokenList
   { tlToks :: DL.DList Token,

@@ -241,7 +241,10 @@ runInterpret opts out checkedModules = do
       result <- try do
         let env = foldMap (I.programEnvironment . Driver.resultModule) checkedModules
         I.runEvalWith
-          (I.defaultSettings {I.evalBufferSize = optsBufferSize opts})
+          I.defaultSettings
+            { I.evalBufferSize = optsBufferSize opts,
+              I.evalDebugMessages = optsDebugEval opts
+            }
           env
           (I.evalName mainName)
       clearSticky out

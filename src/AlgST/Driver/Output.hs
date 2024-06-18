@@ -427,7 +427,7 @@ runOutputHandle settings h buf = bracket prepare id (const run)
     writeChunk prefix renderDoc = \case
       ChunkS s rest -> writeChunk (prefix . s) renderDoc rest
       ChunkD d rest -> hPutStr h (prefix "") *> renderDoc d *> writeChunk id renderDoc rest
-      ChunkFlush -> hPutStr h (prefix "")
+      ChunkFlush -> hPutStr h (prefix "") *> hFlush h
 
     clearCode :: Bool -> ShowS
     clearCode True =

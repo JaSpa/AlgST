@@ -62,8 +62,6 @@ import           AlgST.Syntax.Operators
 import qualified AlgST.Syntax.Type             as T
 import           AlgST.Util
 import           AlgST.Util.SourceLocation
-import           AlgST.Util.Error
-import           AlgST.Util.ErrorMessage
 }
 
 %name parseModule_  Module

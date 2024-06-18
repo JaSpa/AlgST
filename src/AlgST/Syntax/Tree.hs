@@ -25,7 +25,6 @@ import AlgST.Syntax.Kind qualified as K
 import AlgST.Syntax.Module
 import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
-import AlgST.Syntax.Pos qualified as P
 import AlgST.Syntax.Type qualified as T
 import AlgST.Util.SourceLocation
 import Control.Category ((>>>))
@@ -66,16 +65,11 @@ instance (LabeledTree a, LabeledTree b) => LabeledTree (Either a b) where
 instance (LabeledTree a) => LabeledTree [a] where
   labeledTree = pure . tree "" . map labeledTree
 
--- | @Pos@ values are ignored. They are not part of the tree visualization.
-instance LabeledTree P.Pos where
-  labeledTree _ = []
-
+-- | 'SrcRange' values are ignored. They are not part of the tree visualization.
 instance LabeledTree SrcRange where
   labeledTree _ = []
 
-instance (LabeledTree a) => LabeledTree (P.Located a) where
-  labeledTree = labeledTree . P.unL
-
+-- | 'SrcRange' values are ignored. They are not part of the tree visualization.
 instance (LabeledTree a) => LabeledTree (Located a) where
   labeledTree = labeledTree . unL
 

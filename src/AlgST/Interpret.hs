@@ -45,6 +45,7 @@ where
 
 import AlgST.Builtins (builtinsModule)
 import AlgST.Builtins.Names
+import AlgST.Driver.Output
 import AlgST.Syntax.Decl
 import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Kind qualified as K
@@ -52,7 +53,6 @@ import AlgST.Syntax.Module
 import AlgST.Syntax.Name
 import AlgST.Typing.Phase (Tc, TcBind, TcExp, TcExpX (..), TcModule, TcStage)
 import AlgST.Util.Lenses
-import AlgST.Util.Output
 import AlgST.Util.SourceLocation
 import Control.Concurrent
 import Control.Concurrent.Async
@@ -76,7 +76,8 @@ import Data.Void
 import GHC.Stack
 import Lens.Family2
 import Numeric.Natural (Natural)
-import System.Console.ANSI
+import Prettyprinter qualified as P
+import Prettyprinter.Render.Terminal qualified as P
 import System.IO
 import Prelude hiding (log)
 
@@ -114,17 +115,17 @@ newtype ForkCounter = ForkCounter Word
   deriving newtype (Num)
 
 data Settings = Settings
-  { evalDebugMessages :: !(Maybe OutputMode),
+  { evalDebugMessages :: !Bool,
     evalBufferSize :: !Natural,
-    evalOutputHandle :: !Handle
+    evalOutputHandle :: !OutputHandle
   }
 
 defaultSettings :: Settings
 defaultSettings =
   Settings
-    { evalDebugMessages = Nothing,
+    { evalDebugMessages = False,
       evalBufferSize = 0,
-      evalOutputHandle = stderr
+      evalOutputHandle = nullHandle
     }
 
 data EvalInfo = EvalInfo
@@ -278,32 +279,21 @@ makeLenses ['evalEnv] ''EvalInfo
 evalEnvL :: Lens' EvalInfo Env
 {- ORMOLU_ENABLE -}
 
-colorizeThreadLog :: ThreadName -> Settings -> String -> String
-colorizeThreadLog tname sett msg = do
-  let colorize = case evalDebugMessages sett of
-        Just Colorized -> showString . setSGRCode
-        _ -> const id
-  let color t =
-        SetPaletteColor Foreground . fromIntegral $
-          (hash t + 3) `rem` (228 - 21) + 21
-  let msgS =
-        colorize [color tname]
-          . showString "["
-          . shows tname
-          . showString "] "
-          . showString msg
-          . colorize [Reset]
-  msgS ""
+colorizeThreadLog :: ThreadName -> String -> P.Doc P.AnsiStyle
+colorizeThreadLog tname msg =
+  P.annotate (P.palette color) $
+    P.brackets (P.viaShow tname) P.<+> P.pretty msg
+  where
+    color =
+      fromIntegral $ (hash tname + 3) `rem` (228 - 21) + 21
 
 -- | Outputs the given message. If debug colorization is enabled it will be
 -- colorized using the current 'ThreadName'.
 outputM :: String -> EvalM ()
 outputM msg = do
   env <- EvalM ask
-  liftIO do
-    hPutStrLn (evalOutputHandle (evalSettings env)) $
-      colorizeThreadLog (evalThreadName env) (evalSettings env) msg
-    hFlush (evalOutputHandle (evalSettings env))
+  outputDoc (evalOutputHandle (evalSettings env)) \wd ->
+    P.layoutPretty (P.LayoutOptions wd) $ colorizeThreadLog (evalThreadName env) msg
 
 -- | Outputs the given message if debug messages are enabled. The message is
 -- colorized (if colorization is enabled) using the current 'ThreadName'.
@@ -319,13 +309,10 @@ debugLogM msg = etaEvalM do
 -- 'ThreadName' is given or the wrapped value is 'Plain' the message will be
 -- printed without colors.
 debugLog :: (MonadIO m) => Maybe ThreadName -> Settings -> String -> m ()
-debugLog mname sett msg = liftIO do
-  when (isJust (evalDebugMessages sett)) do
-    let msg' = case mname of
-          Nothing -> msg
-          Just tn -> colorizeThreadLog tn sett msg
-    hPutStrLn (evalOutputHandle sett) msg'
-    hFlush (evalOutputHandle sett)
+debugLog mname sett msg = when (evalDebugMessages sett) do
+  outputDoc (evalOutputHandle sett) \wd ->
+    P.layoutPretty (P.LayoutOptions wd) $
+      maybe P.pretty colorizeThreadLog mname msg
 
 runEval :: Env -> EvalM a -> IO a
 runEval = runEvalWith defaultSettings
