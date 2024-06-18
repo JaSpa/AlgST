@@ -12,6 +12,7 @@ import AlgST.Rename.Fresh
 import AlgST.Rename.Modules
 import AlgST.Syntax.Name
 import AlgST.Syntax.Tree
+import AlgST.Util.SourceLocation
 import Control.Monad.Reader
 import Control.Monad.Validate
 import Data.Function
@@ -31,7 +32,8 @@ spec = do
       goldenTests (dir "valid/prog") do
         -- TODO: Verify the resulting module map as well.
         shouldParse parseDecls
-          >=> shouldNotError . renameModule (ModuleName "M") renameEnv
+          >=> shouldNotError
+          . renameModule (ModuleName "M") renameEnv
           >>> fmap drawLabeledTree
 
   describe "invalid" do
@@ -74,7 +76,7 @@ renameEnv =
             PartialResolve $
               Map.singleton
                 (ResolvedName n (ModuleName "R") rid)
-                (AmbiguousDefine ZeroPos)
+                (AmbiguousDefine NullRange)
       (nextResolvedId rid, Bindings (Map.singleton n resolved))
 
 dir :: FilePath -> FilePath

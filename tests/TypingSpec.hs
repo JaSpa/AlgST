@@ -21,9 +21,9 @@ import AlgST.Syntax.Traversal
 import AlgST.Syntax.Tree
 import AlgST.Typing
 import AlgST.Typing.Align
+import AlgST.Util.SourceManager
 import Control.Monad
 import Data.Foldable
-import Data.Function
 import Language.Haskell.TH.CodeDo qualified as Code
 import System.FilePath
 import Test
@@ -57,7 +57,7 @@ spec = do
     describe "invalid" do
       goldenTests
         (dir "invalid/prog")
-        (fmap plainErrors . expectDiagnostics_ . parseAndCheckProgram)
+        (plainErrorsM <=< expectDiagnostics_ . parseAndCheckProgram)
 
   describe "kind checking" do
     specify "builtin types" do
@@ -143,7 +143,7 @@ spec = do
 
 infix 1 `nfShouldBe`, `kindShouldBe`
 
-kindShouldBe :: HasCallStack => String -> K.Kind -> Expectation
+kindShouldBe :: (HasCallStack) => String -> K.Kind -> Assertion ()
 kindShouldBe tyStr k = do
   -- Use kisynth + manual check because kicheck allows for a mismatch which is
   -- covered up by the subkinding relationship.
@@ -151,7 +151,7 @@ kindShouldBe tyStr k = do
   when (k /= k') do
     expectationFailure $ "[expected] " <> show k <> " /= " <> show k' <> " [kisynth]"
 
-nfShouldBe :: HasCallStack => String -> String -> Assertion ()
+nfShouldBe :: (HasCallStack) => String -> String -> Assertion ()
 nfShouldBe t1 t2 = do
   t1Ty <- shouldParse parseType t1
   t2Ty <- shouldParse parseType t2
@@ -181,7 +181,7 @@ performTySynth = runKiAction parseExpr (\embed -> fmap snd . embed . tysynth)
 -- | Parses the string with the given parser, renames it in the context of
 -- 'declarations' and runs the given 'KindM' action.
 runKiAction ::
-  SynTraversable Parse Rn (s Parse) (s Rn) =>
+  (SynTraversable Parse Rn (s Parse) (s Rn)) =>
   Parser (s Parse) ->
   ( forall env st.
     (HasKiEnv env, HasKiSt st) =>
@@ -230,10 +230,11 @@ declCtxt :: CheckContext
                 "data AB = A | B"
               ]
 
-        parsed <-
-          unlines src
-            & runParserSimple parseDecls
-            & either fail pure
+        let buf = encodedBuffer "«input»" (unlines src)
+        let failErrors :: (Foldable f, MonadFail m) => f Diagnostic -> m a
+            failErrors = fail . plainErrors (singletonManager buf)
+        parsed <- either failErrors pure do
+          runParser parseDecls (bufferContents buf)
         let name = ModuleName "Declarations"
         let (declMM, mkRn) = renameModuleExtra name parsed
         let checkRes = do
@@ -243,8 +244,8 @@ declCtxt :: CheckContext
                   builtinsModuleCtxt
                   renamed
                   \runTypeM _ -> runTypeM extractCheckContext
-        ctxt <- either (fail . plainErrors) pure checkRes
-        let checkEnv = importAllEnv ZeroPos name declMM emptyModuleName
+        ctxt <- either failErrors pure checkRes
+        let checkEnv = importAllEnv NullRange name declMM emptyModuleName
         [||(checkEnv, ctxt)||]
     )
 

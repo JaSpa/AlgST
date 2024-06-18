@@ -11,6 +11,7 @@ module AlgST.Driver.Sources
     runSourcesT,
 
     -- * Accessing the @SourceManager@
+    SM.SourceManager,
     askSourceManager,
     asksSourceManager,
 
@@ -27,6 +28,7 @@ where
 import AlgST.Util.Diagnose qualified as D
 import AlgST.Util.SourceManager qualified as SM
 import Control.Applicative
+import Control.Monad
 import Control.Monad.Cont.Class
 import Control.Monad.Error.Class
 import Control.Monad.Fix
@@ -45,7 +47,7 @@ data SourcesSt = SourcesSt
 
 newtype SourcesT m a = SourcesT {unSourcesT :: ReaderT (IORef SourcesSt) m a}
   deriving newtype (Functor, Applicative, Alternative, Monad)
-  deriving newtype (MonadIO, MonadFail, MonadFix)
+  deriving newtype (MonadIO, MonadFail, MonadFix, MonadPlus)
   deriving newtype (MonadWriter w, MonadState s, MonadError e, MonadCont)
 
 instance (MonadReader r m) => MonadReader r (SourcesT m) where

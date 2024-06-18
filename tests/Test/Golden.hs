@@ -9,22 +9,23 @@ module Test.Golden
   )
 where
 
-import AlgST.Util.Error
+import AlgST.Driver.Sources
 import Control.Exception
 import Control.Monad
 import Data.CallStack
 import Data.Foldable
+import Data.Functor.Identity
 import Data.List qualified as List
 import Data.Maybe
 import GHC.Stack
 import System.Directory
 import System.FilePath
-import System.IO
+import System.IO as IO
 import System.IO.Error
 import System.Timeout
 import Test
 
-withTestInputs :: HasCallStack => FilePath -> (FilePath -> SpecWith a) -> SpecWith a
+withTestInputs :: (HasCallStack) => FilePath -> (FilePath -> SpecWith a) -> SpecWith a
 withTestInputs dir run = do
   entries <- runIO $ try @IOError $ listDirectory dir
 
@@ -49,38 +50,40 @@ withTestInputs dir run = do
 -- result will be written to @file <.> ".actual"@ and compared witht the
 -- contents of @file <.> ".expected"@.
 goldenTests :: (HasCallStack, GoldenOutput a) => FilePath -> (String -> Assertion a) -> Spec
-goldenTests dir f = withFrozenCallStack $ goldenTestsH dir \h input ->
-  hPutStr h . renderGoldenOutput =<< f input
+goldenTests dir f = withFrozenCallStack $ goldenTestsH dir \h input -> do
+  result <- f input
+  srcMgr <- askSourceManager
+  liftIO $ hPutStr h $ renderGoldenOutput srcMgr result
 
 -- | Like 'goldenTests' but the function is passed a 'Handle'. The test should
 -- write the results to the handle.
-goldenTestsH :: HasCallStack => FilePath -> (Handle -> String -> Assertion ()) -> Spec
+goldenTestsH :: (HasCallStack) => FilePath -> (Handle -> String -> Assertion ()) -> Spec
 goldenTestsH dir = withFrozenCallStack $ withTestInputs dir . fileSpec
 
 class GoldenOutput a where
-  renderGoldenOutput :: a -> String
+  renderGoldenOutput :: SourceManager -> a -> String
 
 instance GoldenOutput String where
-  renderGoldenOutput = id
+  renderGoldenOutput _ = id
 
 instance GoldenOutput Diagnostic where
-  renderGoldenOutput = show
+  renderGoldenOutput mgr = plainErrors mgr . Identity
 
-instance Foldable f => GoldenOutput (f Diagnostic) where
+instance (Foldable f) => GoldenOutput (f Diagnostic) where
   renderGoldenOutput = plainErrors
 
-fileSpec :: HasCallStack => (Handle -> String -> Assertion ()) -> FilePath -> Spec
+fileSpec :: (HasCallStack) => (Handle -> String -> Assertion ()) -> FilePath -> Spec
 fileSpec example fp = specify (takeFileName fp) do
   -- Ensures there is a final newline.
   let normalize = unlines . lines
   -- Read the source code.
-  src <- readFile fp
+  src <- IO.readFile fp
   -- Give the action 2s to complete.
   let fpActual = fp <.> "actual"
+  let example' h = runSourcesT $ example h src
   let runWithTimeout =
-        failNothing "Test timed out." =<< timeout 2_000_000 do
-          withFile fpActual WriteMode \h ->
-            evaluate =<< example h src
+        runSourcesT . failNothing "Test timed out." =<< timeout 2_000_000 do
+          withFile fpActual WriteMode (example' >=> evaluate)
   -- If an error occurs during evaluation of `example` we remove any previous
   -- ".actual" files. Use `tryIOError` to ignore any IO errors in this cleanup
   -- code.
@@ -92,7 +95,7 @@ fileSpec example fp = specify (takeFileName fp) do
   when (not hasExpectation) do
     pendingWith $ "Expected output file " ++ fpExpected ++ " does not exist."
   -- Read the expectation and actual result.
-  actual <- readFile fpActual
-  expectation <- readFile fpExpected
+  actual <- IO.readFile fpActual
+  expectation <- IO.readFile fpExpected
   -- Check the result.
   normalize actual `shouldBe` normalize expectation

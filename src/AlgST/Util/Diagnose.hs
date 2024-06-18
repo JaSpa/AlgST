@@ -37,6 +37,7 @@ module AlgST.Util.Diagnose
 
     -- ** Rendering the @diagnose@ values
     layoutDiagnostic,
+    layoutDiagnosticSimple,
     E.WithUnicode (..),
     P.PageWidth (..),
 
@@ -157,7 +158,7 @@ rangeToPosition = diagnoseSrcRange . diManager
 -- 'addSorted'.
 --
 -- The given diagnostics are sorted based on their main 'SrcRange'.
-buildSorted :: SourceManager -> [Diagnostic] -> BaseDiagnostic
+buildSorted :: (Foldable f) => SourceManager -> f Diagnostic -> BaseDiagnostic
 buildSorted mgr diags = addSorted mgr diags (onlyFiles mgr)
 
 -- | Adds a list of diagnostics to a 'BaseDiagnostic'.
@@ -170,12 +171,12 @@ buildSorted mgr diags = addSorted mgr diags (onlyFiles mgr)
 -- diagnostics already added. Calling this function twice will always add the
 -- second set of diagnostics after the first set.
 addSorted ::
-  SourceManager -> [Diagnostic] -> BaseDiagnostic -> BaseDiagnostic
+  (Foldable f) => SourceManager -> f Diagnostic -> BaseDiagnostic -> BaseDiagnostic
 addSorted mgr diags d0 = foldl' E.addReport d0 sortedReports
   where
     -- Builds the reports, diagnose's own representation, from each Diagnostic,
     -- our representation.
-    reports = [b (initialDiagInfo mgr) | Diagnostic b <- diags]
+    reports = foldr (\(Diagnostic b) rs -> b (initialDiagInfo mgr) : rs) [] diags
 
     -- We want to display all reports in a specific order: A before B if A's
     -- primary marker is before B's primary maker.
@@ -249,6 +250,12 @@ layoutDiagnostic :: E.WithUnicode -> P.PageWidth -> BaseDiagnostic -> P.SimpleDo
 layoutDiagnostic unicode width =
   E.prettyDiagnostic' unicode (E.TabSize 2)
     >>> P.layoutPretty (P.LayoutOptions width)
+    >>> P.reAnnotateS style
+
+layoutDiagnosticSimple :: BaseDiagnostic -> P.SimpleDocStream P.AnsiStyle
+layoutDiagnosticSimple =
+  E.prettyDiagnostic' E.WithUnicode (E.TabSize 2)
+    >>> P.layoutPretty P.defaultLayoutOptions
     >>> P.reAnnotateS style
 
 data Ann

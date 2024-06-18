@@ -14,15 +14,14 @@ import AlgST.Syntax.Name
 import AlgST.Syntax.Traversal
 import AlgST.Typing
 import AlgST.Typing.Align
-import AlgST.Util.Output
 import AlgST.Util.PartialOrd
 import Control.Monad.Reader.Class
 import Test
 
-positive :: Example a => a -> SpecWith (Arg a)
+positive :: (Example a) => a -> SpecWith (Arg a)
 positive = specify "positive"
 
-negative :: Example a => a -> SpecWith (Arg a)
+negative :: (Example a) => a -> SpecWith (Arg a)
 negative = specify "negative"
 
 spec :: Spec
@@ -30,7 +29,7 @@ spec = do
   describe "subtyping" do
     specify "equal types are subtypes" do
       let ?context = [("x", K.TU), ("y", K.SL), ("s", K.SL)]
-      let check :: HasCallStack => String -> Expectation
+      let check :: (HasCallStack) => String -> Assertion ()
           check s = s <=! s
       check "Int"
       check "Int -> Bool"
@@ -108,27 +107,27 @@ spec = do
 type HasContext = (?context :: [(String, K.Kind)])
 
 -- | Asserts that the first argument is a subtype of the second argument.
-(<=!) :: (HasCallStack, HasContext) => String -> String -> Expectation
+(<=!) :: (HasCallStack, HasContext) => String -> String -> Assertion ()
 t <=! u = do
   (t', u') <- synthTypes t u
   Alpha t' <=? Alpha u' @? unlines msg
   where
     msg =
-      [ styleBold (showString t) "",
+      [ t,
         "  ---should be a subtype of---",
-        styleBold (showString u) ""
+        u
       ]
 
 -- | Asserts that the first argument is /not/ a subtype of the second argument.
-(</=!) :: (HasCallStack, HasContext) => String -> String -> Expectation
+(</=!) :: (HasCallStack, HasContext) => String -> String -> Assertion ()
 t </=! u = do
   (t', u') <- synthTypes t u
   Alpha t' </=? Alpha u' @? unlines msg
   where
     msg =
-      [ styleBold (showString t) "",
+      [ t,
         "  ---shouldn't be a subtype of---",
-        styleBold (showString u) ""
+        u
       ]
 
 -- | Parses, renames and kind-checks a pair of types.
@@ -146,5 +145,5 @@ synthTypes t1 t2 = do
     (varNames, kinds) = unzip ?context
     names :: [PName Types]
     names = UnqualifiedName . Unqualified <$> varNames
-    bindTcVars :: HasKiEnv env => [RnName Types] -> env -> env
+    bindTcVars :: (HasKiEnv env) => [RnName Types] -> env -> env
     bindTcVars rnNames = bindTyVars $ zip rnNames kinds

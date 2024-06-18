@@ -9,9 +9,11 @@ module InterpretSpec (spec) where
 import AlgST.Builtins
 import AlgST.Driver qualified as Driver
 import AlgST.Driver.Output
+import AlgST.Driver.Sources
 import AlgST.Interpret
 import AlgST.Syntax.Module
 import AlgST.Syntax.Name
+import AlgST.Util.SourceManager
 import Data.HashMap.Strict qualified as HM
 import Data.Map.Strict qualified as Map
 import System.FilePath
@@ -34,13 +36,15 @@ spec = do
   describe "whole programs" do
     goldenTestsH dir \h inp -> do
       val <- compileAndRun h inp
-      hPrint h val
+      liftIO $ hPrint h val
 
 compileAndRun :: Handle -> String -> Assertion Value
 compileAndRun h src = do
   (output, mResultsGraph) <- captureOutput \outH -> do
+    let buf = encodedBuffer "«input»" src
+    addBuffer buf
     let settings =
-          Driver.addModuleSource MainModule "" src $
+          Driver.addModuleSource MainModule buf $
             Driver.defaultSettings
               { -- All the different tests are run in parallel. Stay sequential here.
                 Driver.driverSequential = True,
@@ -51,10 +55,13 @@ compileAndRun h src = do
   let allResults = Driver.compactResults resultsGraph
   mainResults <- HM.lookup MainModule allResults @? "›Main‹ module missing"
   mainName <- Driver.lookupRenamed MainFunction mainResults @? "›main‹ function missing"
-  runEvalWith
-    (defaultSettings {evalOutputHandle = h})
-    (Driver.mergedResultEvalEnvironment allResults)
-    (evalName mainName)
+  (output, value) <- liftIO $ captureOutput \outH -> do
+    runEvalWith
+      (defaultSettings {evalOutputHandle = outH})
+      (Driver.mergedResultEvalEnvironment allResults)
+      (evalName mainName)
+  liftIO $ hPutStr h output
+  pure value
 
 dir :: FilePath
 dir = dropExtension __FILE__

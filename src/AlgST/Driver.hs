@@ -23,7 +23,6 @@ module AlgST.Driver
     addSearchPathFront,
     addSearchPathBack,
     addModuleSource,
-    -- addModuleSourceIO,
 
     -- * Actions
     Result (..),
@@ -213,15 +212,6 @@ setSearchPaths paths s = s {driverSearchPaths = Seq.fromList paths}
 addModuleSource :: ModuleName -> Buffer -> Settings -> Settings
 addModuleSource name buf settings =
   settings {driverVirtualSources = HM.insert name buf (driverVirtualSources settings)}
-
-{-
--- | Read the source code for the given module from the file system and
--- register it using 'addModuleSource'.
-addModuleSourceIO :: ModuleName -> FilePath -> Settings -> IO Settings
-addModuleSourceIO name fp settings = do
-  src <- readFile fp
-  pure $ addModuleSource name fp src settings
--}
 
 -- | Checks if the driver is in sequential mode ('driverSequential'). If so the
 -- returned computation strategy will be 'Seq', otherwise it will be the given

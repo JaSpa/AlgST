@@ -44,10 +44,10 @@ spec = do
       let ?parser = parseType
       "A b c" `shouldParseLike` "((A b) c)"
 
-parseTree :: LabeledTree a => Parser a -> String -> Assertion String
+parseTree :: (LabeledTree a) => Parser a -> String -> Assertion String
 parseTree p src = drawLabeledTree <$> shouldParse p src
 
-shouldParseLike :: (?parser :: Parser a, LabeledTree a) => String -> String -> Expectation
+shouldParseLike :: (?parser :: Parser a, LabeledTree a) => String -> String -> Assertion ()
 shouldParseLike src1 src2 =
   join $
     shouldBe

@@ -8,22 +8,21 @@ import AlgST.Parse.Unparser ()
 import AlgST.Syntax.Kind
 import AlgST.Util.PartialOrd
 import Data.Foldable
-import Test.Hspec
+import Test
 
 spec :: Spec
 spec = do
   it "correctly retrieves multiplicity information" do
-    multiplicity P `shouldBe` Nothing
+    multiplicity P `shouldBe` Nothing :: IO ()
     multiplicity TL `shouldBe` Just Lin
     multiplicity TU `shouldBe` Just Un
     multiplicity SL `shouldBe` Just Lin
     multiplicity SU `shouldBe` Just Un
 
   it "parses all kinds correctly" do
-    for_ allKinds \k ->
-      case runParserSimple parseKind (show k) of
-        Left e -> expectationFailure $ "can't parse kind " ++ show k ++ "\n" ++ e
-        Right k' -> k `shouldBe` k'
+    for_ allKinds \k -> do
+      k' <- shouldParse parseKind (show k)
+      k' `shouldBe` k
 
   describe "partial order" do
     it "is reflexive" do
