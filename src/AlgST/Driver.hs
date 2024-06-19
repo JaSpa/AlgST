@@ -596,7 +596,6 @@ reportErrors diags = when (not (null diags)) do
   -- TODO: We have to decide between Unicode and ASCII output as well.
   -- Idea: look at the encoding of the output handle if the user didn't
   -- specify a flag forcing ASCII output.
-  -- TODO: Take the maximum line width from the terminal.
   handle <- askOutputDiags
   outputDoc handle \width -> D.layoutDiagnostic D.WithUnicode width baseDiag
 

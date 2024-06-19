@@ -368,8 +368,9 @@ interpretRev !useSticky sticky0 =
       SetSticky s -> Just s
       _ -> Nothing
     getMessage = \case
-      WriteDoc d -> Dual $ Endo $ ChunkD d
       WriteMessage s -> Dual $ Endo $ ChunkS s
+      -- All documents get terminated by a line break.
+      WriteDoc d -> Dual $ Endo $ ChunkD d . ChunkS ('\n' :)
       SetSticky (Sticky s) | not useSticky -> Dual $ Endo $ ChunkS (showString s . showChar '\n')
       _ -> mempty
     isDone = \case
