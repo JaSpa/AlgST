@@ -74,6 +74,7 @@ instance Show Buffer where
   showsPrec p b = showParen (p > 10) do
     showString "Buffer "
       . shows (bufferName b)
+      . showChar ' '
       . showsPrec 11 (fullRange (bufferContents b))
 
 instance HasRange Buffer where
@@ -129,8 +130,8 @@ readStdin fp = readHandle fp IO.stdin
 findContainingBuffer ::
   SourceManager -> SrcLoc -> Maybe (FilePath, (ByteString, ByteString))
 findContainingBuffer (SourceManager buffers) loc = do
-  let (_, bfs) = splitBufList loc buffers
-  b :<| _ <- pure bfs
+  let (bfs, _) = splitBufList loc buffers
+  _ :|> b <- pure bfs
   let src = bufferContents b
       len = BS.length src
       start = unsafeBasePtr src
