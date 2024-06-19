@@ -448,8 +448,8 @@ runOutputCollect !useColors buf = do
       ChunkD d next -> writeChunks (s . renderDoc d) next
       ChunkFlush -> pure s
     renderDoc
-      | useColors = renderShowS
-      | otherwise = TL.foldrChunks (\x y -> showString (T.unpack x) . y) id . Term.renderLazy
+      | useColors = TL.foldrChunks (\x y -> showString (T.unpack x) . y) id . Term.renderLazy
+      | otherwise = renderShowS
 
 runOutput :: forall s. (s -> ChunkList -> IO s) -> s -> Bool -> ActionBuffer -> IO s
 runOutput writeChunks s0 !useSticky actBuffer = go s0 emptySticky
