@@ -48,7 +48,7 @@ parseTH modName baseMap srcLines = Code.do
   let check renamed = do
         let doCheck = checkWithModule mempty renamed \runTypeM checked ->
               (checked,) <$> runTypeM extractCheckContext
-        mapErrors (undefined runErrors) $ mapValidateT lift doCheck
+        mapErrors runErrors $ mapValidateT lift doCheck
   let checked = resolve mempty >>= \(RenameExtra f) -> f check
   case checked of
     Left errs -> Code.do
