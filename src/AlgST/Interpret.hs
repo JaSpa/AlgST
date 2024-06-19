@@ -279,11 +279,12 @@ makeLenses ['evalEnv] ''EvalInfo
 evalEnvL :: Lens' EvalInfo Env
 {- ORMOLU_ENABLE -}
 
-colorizeThreadLog :: ThreadName -> String -> P.Doc P.AnsiStyle
-colorizeThreadLog tname msg =
-  P.annotate (P.palette color) $
-    P.brackets (P.viaShow tname) P.<+> P.pretty msg
+formatThreadLog :: Bool -> ThreadName -> String -> P.Doc P.AnsiStyle
+formatThreadLog colorize tname msg =
+  setColorIfEnabled $ P.brackets (P.viaShow tname) P.<+> P.pretty msg
   where
+    setColorIfEnabled =
+      if colorize then P.annotate $! P.palette color else id
     color =
       fromIntegral $ (hash tname + 3) `rem` (228 - 21) + 21
 
@@ -293,7 +294,11 @@ outputM :: String -> EvalM ()
 outputM msg = do
   env <- EvalM ask
   outputDoc (evalOutputHandle (evalSettings env)) \wd ->
-    P.layoutPretty (P.LayoutOptions wd) $ colorizeThreadLog (evalThreadName env) msg
+    P.layoutPretty (P.LayoutOptions wd) $
+      formatThreadLog
+        (evalDebugMessages (evalSettings env))
+        (evalThreadName env)
+        msg
 
 -- | Outputs the given message if debug messages are enabled. The message is
 -- colorized (if colorization is enabled) using the current 'ThreadName'.
@@ -312,7 +317,7 @@ debugLog :: (MonadIO m) => Maybe ThreadName -> Settings -> String -> m ()
 debugLog mname sett msg = when (evalDebugMessages sett) do
   outputDoc (evalOutputHandle sett) \wd ->
     P.layoutPretty (P.LayoutOptions wd) $
-      maybe P.pretty colorizeThreadLog mname msg
+      maybe P.pretty (formatThreadLog True) mname msg
 
 runEval :: Env -> EvalM a -> IO a
 runEval = runEvalWith defaultSettings
