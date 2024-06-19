@@ -1,4 +1,8 @@
-1:21: error:
-	 Multiple declarations of Here
-	 Declared at: 1:14
-	              1:21
+[error]: duplicate declaration
+     ╭──▶ «input»@1:14-1:18
+     │
+   1 │ data Where = Here | Here Int
+     •              ┬───   ┬─── 
+     •              ╰───────╸ first declaration
+     •                     ╰╸ second declaration
+─────╯

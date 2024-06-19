@@ -1,2 +1,7 @@
-4:3: error:
-	 Unnecessary wildcard. All possible branches are handled.
+[warning]: unnecessary wildcard
+     ╭──▶ «input»@4:3-4:9
+     │
+   4 │   _ -> 3,
+     •   ┬───── 
+     •   ╰╸ branch will never be taken
+─────╯

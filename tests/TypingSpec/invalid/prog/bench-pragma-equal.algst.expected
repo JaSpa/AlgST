@@ -1,5 +1,19 @@
-1:16: error:
-	 Types in benchmark are equal.
+[error]: benchmarked types are equal
+     ╭──▶ «input»@1:16-1:19
+     │
+   1 │ {-# BENCHMARK! Int Int #-}
+     •                ┬── ┬── 
+     •                ╰────╸ first type ...
+     •                    ╰╸ ... is the same as the second type
+─────╯
 
-4:1: error:
-	 Types in benchmark are equal.
+[error]: benchmarked types are equal
+     ╭──▶ «input»@4:1-4:11
+     │
+   4 │ dual ?Int.End!
+     • ┬───────── 
+     • ╰╸ first type ...
+   5 │ !Int.End?
+     • ┬──── 
+     • ╰╸ ... is the same as the second type
+─────╯

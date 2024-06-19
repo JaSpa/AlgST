@@ -1,3 +1,12 @@
-1:1: error:
-	 Constructor P0 is a protocol constructor for type P0
-	 Protocol constructors can only be used in case patterns and arguments to ‘select’.
+[error]: protocol constructor used as value
+     ╭──▶ «unknown location»@1:1-1:1
+     │
+   1 │ <no line>
+     • 
+     • ╰╸ ResolvedName (Name (ModuleName "") (Unqualified {getUnqualified = "P0"})) (ModuleName "Declarations") (ResolvedId 17)
+     •    is a protocol constructor for
+     •    ResolvedName (Name (ModuleName "") (Unqualified {getUnqualified = "P0"})) (ModuleName "Declarations") (ResolvedId 7)
+     •
+     │ Note: Protocol constructors can only be used in case patterns and
+     │       arguments to select.
+─────╯

@@ -1,4 +1,10 @@
-3:3: error:
-	 Multiple wildcards in case expression: wild1 _
-	 Branches at: 2:3
-	              3:3
+[error]: multiple wildcard branches in case expression
+     ╭──▶ «input»@2:3-2:13
+     │
+   2 │   wild1 -> 1,
+     •   ┬───────── 
+     •   ╰╸ first occurence
+   3 │   _ -> 2,
+     •   ┬───── 
+     •   ╰╸ second occurence
+─────╯

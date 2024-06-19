@@ -1,4 +1,8 @@
-1:1: error:
-	 Invalid type application
-	    () ()
-	 Type constructor () needs 0 paramters, 1 provided.
+[error]: invalid type application
+     ╭──▶ «unknown location»@1:1-1:1
+     │
+   1 │ <no line>
+     • 
+     • ├╸ no parameters
+     • ╰╸ but one was given
+─────╯

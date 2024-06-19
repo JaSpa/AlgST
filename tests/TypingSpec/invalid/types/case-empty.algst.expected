@@ -1,2 +1,7 @@
-1:15: error:
-	 Empty case expression.
+[error]: ambigous type
+     ╭──▶ «input»@1:15-1:27
+     │
+   1 │ \(n : Int) -> case n of {}
+     •               ┬───────────
+     •               ╰╸ provide a type signature
+─────╯

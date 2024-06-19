@@ -1,3 +1,9 @@
-1:1: error:
-	 Pair constructor (,) cannot be used as an expression.
-	 It can only appear in patterns and with ‘select’.
+[error]: misplaced pair constructor
+     ╭──▶ «unknown location»@1:1-1:1
+     │
+   1 │ <no line>
+     • 
+     • ╰╸ cannot appear as an expression
+     •
+     │ Hint: Use the ‘(…, …)’ form when outside of patterns and ‘select’
+─────╯

@@ -1,2 +1,8 @@
-2:19: error:
-	 Unbound variable a
+[error]: unbound variable
+     ╭──▶ «input»@2:19-2:20
+     │
+   2 │ \[a:TU] -> negate a
+     •                   ┬
+     •                   ╰╸ this name is neither defined anywhere in scope nor
+     •                      imported
+─────╯

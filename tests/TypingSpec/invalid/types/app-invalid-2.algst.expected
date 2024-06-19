@@ -1,5 +1,9 @@
-1:28: error:
-	 Type of
-	    f
-	 is neither a function type nor convertible to a function type:
-	    forall (a:TU). a -> ()
+[error]: not a function type
+     ╭──▶ «input»@1:28-1:29
+     │
+   1 │ \(f : ∀(a:TU). a -> ()) -> f 10
+     •                            ┬ 
+     •                            ╰╸ expected a function but this expression's
+     •                               type is not convertible to a function type:
+     •                               forall (a:TU). a -> ()
+─────╯

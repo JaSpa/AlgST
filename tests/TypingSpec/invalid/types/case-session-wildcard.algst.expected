@@ -1,11 +1,35 @@
-1:22: error:
-	 Incomplete case. Missing branch:
-	    False
+[error]: incomplete pattern match
+     ╭──▶ «input»@1:22-4:2
+     │
+   1 │ ╭┤ \(c : ?Bool.End!) -> case c of {
+   2 │ │    True c -> (),
+   3 │ │    _ -> (),
+   4 │ ├┤ }
+     • │ 
+     • ╰╸ add a branch for
+     •    ResolvedName (Name (ModuleName "") (Unqualified {getUnqualified = "False"})) (ModuleName "Builtin") (ResolvedId 6)
+─────╯
 
-2:8: error:
-	 Linear variable c of type
-	       End!
-	 is unused.
+[error]: linearity violated: missing use
+     ╭──▶ «input»@2:8-2:9
+     │
+   2 │   True c -> (),
+     •        ┬ 
+     •        ├╸ linear variable is unused
+     •        ╰╸ variable bound here of type End!
+─────╯
 
-3:3: error:
-	 Wildcards are not allowed in the context started at 1:22
+[error]: wildcard pattern not allowed in receiving ‘case’
+     ╭──▶ «input»@3:3-3:10
+     │
+   1 │ ╭┤ \(c : ?Bool.End!) -> case c of {
+   2 │ │    True c -> (),
+   3 │ │    _ -> (),
+     • │    ┬────── 
+     • │    ╰╸ wildcard branch appears here
+   4 │ ├┤ }
+     • │ 
+     • ╰╸ in this receving case expression
+     •
+     │ Hint: Handle all branches covered by the wildcard explicitly.
+─────╯

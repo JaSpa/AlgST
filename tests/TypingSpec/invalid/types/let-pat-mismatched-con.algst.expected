@@ -1,6 +1,8 @@
-2:1: error:
-	 Incomplete case. Missing branch:
-	    D0'
-
-2:5: error:
-	 D0 is not a constructor for type D0'
+[error]: 
+     ╭──▶ «input»@2:5-2:7
+     │
+   2 │ let D0 = D0' in ()
+     •     ┬─   ┬── 
+     •     ╰─────╸ not a type constructor for type D0'
+     •          ╰╸ subject of case expression is of type D0'
+─────╯

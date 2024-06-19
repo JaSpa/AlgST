@@ -1,4 +1,10 @@
-1:15: error:
-	 Kind mismatch in benchmark pragma.
-	     type at 1:15 has kind TU
-	     type at 1:18 has kind SL
+[error]: kind mismatch in benchmark pragma
+     ╭──▶ «input»@1:15-1:17
+     │
+   1 │ {-# BENCHMARK () End! #-}
+     •               ┬─ ┬─── 
+     •               ╰───╸ type has kind TU
+     •                  ╰╸ type has kind SL
+     •
+     │ Note: Heterogeneous type equality is not supported.
+─────╯

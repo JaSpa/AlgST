@@ -1,3 +1,8 @@
-1:1: error:
-	 Operator (+) is missing an argument.
-	 Wrap it in parentheses for an operator section.
+[error]: missing operand
+     ╭──▶ «unknown location»@1:1-1:1
+     │
+   1 │ <no line>
+     • 
+     • ├╸ operator is missing an operand
+     • ╰╸ wrap it in parentheses for an operator section
+─────╯

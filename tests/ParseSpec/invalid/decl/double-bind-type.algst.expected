@@ -1,14 +1,26 @@
-1:9: error:
-	 Conflicting bindings for a
-	 Bound at: 1:9
-	           1:11
+[error]: duplicate binding
+     ╭──▶ «input»@1:9-1:10
+     │
+   1 │ type T1 a a = a -> a
+     •         ┬ ┬ 
+     •         ╰──╸ first binding
+     •           ╰╸ second binding
+─────╯
 
-3:9: error:
-	 Conflicting bindings for b
-	 Bound at: 3:9
-	           3:11
+[error]: duplicate binding
+     ╭──▶ «input»@3:9-3:10
+     │
+   3 │ data T2 b b = T2
+     •         ┬ ┬ 
+     •         ╰──╸ first binding
+     •           ╰╸ second binding
+─────╯
 
-5:13: error:
-	 Conflicting bindings for c
-	 Bound at: 5:13
-	           5:15
+[error]: duplicate binding
+     ╭──▶ «input»@5:13-5:14
+     │
+   5 │ protocol T3 c c = T3
+     •             ┬ ┬ 
+     •             ╰──╸ first binding
+     •               ╰╸ second binding
+─────╯

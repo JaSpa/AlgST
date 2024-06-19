@@ -1,5 +1,9 @@
-1:42: error:
-	 Linear variable a is used twice.
-	 Bound at: 1:28
-	  Used at: 1:40
-	           1:42
+[error]: linearity violated: multiple uses
+     ╭──▶ «input»@1:40-1:41
+     │
+   1 │ \[a:TL] (f : a -> a -> a) (a : a) -> f a a
+     •                           ┬──────      ┬ ┬
+     •                           │            ╰──╸ first use
+     •                           │              ╰╸ second use
+     •                           ╰╸ variable bound here of type a
+─────╯

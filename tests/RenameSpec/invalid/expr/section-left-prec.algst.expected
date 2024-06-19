@@ -1,4 +1,12 @@
-1:12: error:
-	 The operator (*) of a section must have lower precedence
-	         than (+) at 1:6
-	 Use parentheses to explicitly specify the associativity.
+[error]: precedence conflict
+     ╭──▶ «input»@1:2-1:13
+     │
+   1 │ ("a" + "b" *)
+     •  ┬────────── 
+     •  ╰──────────╸ the operator of a section must have lower predence than its
+     •      │     │  operand
+     •      ╰──────╸ this operator has higher precedence
+     •            ╰╸ than this section operator
+     •
+     │ Hint: Use parentheses to explicitly specify the associativity.
+─────╯

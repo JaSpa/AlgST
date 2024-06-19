@@ -1,4 +1,8 @@
-1:14: error:
-	 Pattern let expression has type
-	       ()
-	 which is not allowed in pattern expressions.
+[error]: non-matchable subject in pattern ‘let’ expression
+     ╭──▶ «input»@1:14-1:16
+     │
+   1 │ let (a, b) = () in ()
+     •              ┬─ 
+     •              ╰╸ cannot match on values of type
+     •                 ()
+─────╯

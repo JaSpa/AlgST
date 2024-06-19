@@ -1,3 +1,9 @@
-3:3: error:
-	 Incomplete case. Missing branch:
-	    False
+[error]: incomplete pattern match
+     ╭──▶ «input»@3:3-4:5
+     │
+   3 │ ╭┤   let True = b in
+   4 │ ├┤   ()
+     • │ 
+     • ╰╸ add a branch for
+     •    ResolvedName (Name (ModuleName "") (Unqualified {getUnqualified = "False"})) (ModuleName "Builtin") (ResolvedId 6)
+─────╯

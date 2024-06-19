@@ -1,3 +1,10 @@
-1:1: error:
-	 The declared type of MyProto is P
-	 ‘data’ declarations can only declare types with kinds TL, or TU (the default).
+[error]: invalid ‘data’ declaration
+     ╭──▶ «unknown location»@1:1-1:1
+     │
+   1 │ <no line>
+     • 
+     • ╰╸ ResolvedName (Name (ModuleName "") (Unqualified {getUnqualified = "MyProto"})) (ModuleName "M") (ResolvedId 0)
+     •    cannot be declared as kind P
+     •
+     │ Note: data declarations can only declare types with kinds TL, or TU
+─────╯

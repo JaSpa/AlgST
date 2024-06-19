@@ -1,4 +1,8 @@
-2:6: error:
-	 Conflicting bindings for x
-	 Bound at: 2:6
-	           2:8
+[error]: duplicate binding
+     ╭──▶ «input»@2:6-2:7
+     │
+   2 │   C1 x x -> 0
+     •      ┬ ┬ 
+     •      ╰──╸ first binding
+     •        ╰╸ second binding
+─────╯

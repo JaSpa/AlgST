@@ -1,11 +1,20 @@
-2:7: error:
-	 Expression
-	     rec go : Bool -o Int = \(a:Bool) -o go a
-	 has type
-	       Bool -o Int
-	 but context demands a subtype of
-	       Bool -> Int
+[error]: type mismatch
+     ╭──▶ «input»@2:7-2:31
+     │
+   2 │ foo = rec go : Bool -o Int = \(a:Bool) -o go a
+     •       ┬─────────────────────── 
+     •       ╰╸ actual type
+     •          Bool -o Int
+     •          is not a subtype of
+     •          Bool -> Int
+─────╯
 
-2:21: error:
-	 Unexpected kind TL for type Bool -o Int
-	 Expected a subkind of TU
+[error]: kind mismatch
+     ╭──▶ «input»@2:16-2:27
+     │
+   2 │ foo = rec go : Bool -o Int = \(a:Bool) -o go a
+     •                ┬────────── 
+     •                ╰╸ type has kind TL
+     •
+     │ Hint: Expected a subkind of TU.
+─────╯

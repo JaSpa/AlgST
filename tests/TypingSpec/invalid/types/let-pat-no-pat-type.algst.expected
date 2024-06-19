@@ -1,4 +1,8 @@
-2:14: error:
-	 Pattern let expression has type
-	       !P0.s
-	 which is not allowed in pattern expressions.
+[error]: non-matchable subject in pattern ‘let’ expression
+     ╭──▶ «input»@2:14-2:15
+     │
+   2 │   let P0 c = c in
+     •              ┬ 
+     •              ╰╸ cannot match on values of type
+     •                 !P0.s
+─────╯

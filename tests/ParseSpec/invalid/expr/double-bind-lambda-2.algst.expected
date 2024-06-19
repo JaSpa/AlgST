@@ -1,4 +1,8 @@
-1:3: error:
-	 Conflicting bindings for a
-	 Bound at: 1:3
-	           1:10
+[error]: duplicate binding
+     ╭──▶ «input»@1:2-1:8
+     │
+   1 │ \[a:TU] [a:TU] -> ()
+     •  ┬───── ┬───── 
+     •  ╰───────╸ first binding
+     •         ╰╸ second binding
+─────╯

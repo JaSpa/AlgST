@@ -1,3 +1,9 @@
-1:15: error:
-	 Unexpected kind P for type a
-	 Expected a subkind of TL
+[error]: kind mismatch
+     ╭──▶ «input»@1:15-1:16
+     │
+   1 │ forall (a:P). a -> D0_TL
+     •               ┬ 
+     •               ╰╸ type has kind P
+     •
+     │ Hint: Expected a subkind of TL.
+─────╯

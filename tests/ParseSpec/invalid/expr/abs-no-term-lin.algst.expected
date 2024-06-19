@@ -1,3 +1,13 @@
-1:16: error:
-	 Lambda at 1:1 binds only type variables.
-	 Use the unrestricted arrow ‘->’ for this case.
+[warning]: unnecessary linear arrow
+     ╭──▶ «input»@1:16-1:18
+     │
+   1 │ \[x:TU] [y:TU] -o 0
+     •                ┬─ 
+     •                ╰╸ prefer an unrestricted arrow ->
+     •
+─────┼──▶ «unknown location»@1:1-1:1
+     │
+   1 │ <no line>
+     • 
+     • ╰╸ lambda abstraction binds only type variables
+─────╯

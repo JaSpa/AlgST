@@ -1,15 +1,21 @@
-9:9: error:
-	 Expression
-	     bar
-	 has type
-	       D2 -> D2
-	 but context demands a subtype of
-	       D1 -o D1
+[error]: type mismatch
+     ╭──▶ «input»@9:9-9:12
+     │
+   9 │ foo x = bar x
+     •         ┬── 
+     •         ╰╸ actual type
+     •            D2 -> D2
+     •            is not a subtype of
+     •            D1 -o D1
+─────╯
 
-12:9: error:
-	 Expression
-	     foo
-	 has type
-	       D1 -> D1
-	 but context demands a subtype of
-	       D2 -o D2
+[error]: type mismatch
+     ╭──▶ «input»@12:9-12:12
+     │
+  12 │ bar x = foo x
+     •         ┬── 
+     •         ╰╸ actual type
+     •            D1 -> D1
+     •            is not a subtype of
+     •            D2 -o D2
+─────╯

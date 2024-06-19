@@ -1,5 +1,9 @@
-1:22: error:
-	 Type of
-	    f
-	 is neither a forall type nor convertible to a forall type:
-	    Int -> Int
+[error]: not a forall type
+     ╭──▶ «input»@1:22-1:23
+     │
+   1 │ \(f : Int -> Int) -> f [Int] 10
+     •                      ┬ 
+     •                      ╰╸ this expression's type is not convertible to a
+     •                         forall type:
+     •                         Int -> Int
+─────╯

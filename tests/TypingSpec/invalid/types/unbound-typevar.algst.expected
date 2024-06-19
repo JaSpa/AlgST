@@ -1,2 +1,8 @@
-2:18: error:
-	 Unbound type variable a
+[error]: unbound type variable
+     ╭──▶ «input»@2:18-2:19
+     │
+   2 │ \(a:Int) -> fst [a]
+     •                  ┬ 
+     •                  ╰╸ this name is neither defined anywhere in scope nor
+     •                     imported
+─────╯

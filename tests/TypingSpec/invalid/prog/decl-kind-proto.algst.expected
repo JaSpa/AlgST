@@ -1,3 +1,10 @@
-1:1: error:
-	 The declared type of MyProtocol is TU
-	 ‘protocol’ declarations can only declare types with kind P (the default).
+[error]: invalid ‘protocol’ declaration
+     ╭──▶ «unknown location»@1:1-1:1
+     │
+   1 │ <no line>
+     • 
+     • ╰╸ ResolvedName (Name (ModuleName "") (Unqualified {getUnqualified = "MyProtocol"})) (ModuleName "M") (ResolvedId 0)
+     •    cannot be declared as kind TU
+     •
+     │ Note: protocol declarations can only declare types with kind P
+─────╯

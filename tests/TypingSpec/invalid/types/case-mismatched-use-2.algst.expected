@@ -1,5 +1,15 @@
-4:14: error:
-	 Linear variable
-	    a : a
-	 is not consumed in branch A at 3:7
-	 but is consumed in branch B at 4:7
+[error]: linearity violated: use differes between branches
+     ╭──▶ «input»@4:14-4:15
+     │
+   1 │ \[a : TL] (x : AB) (f: a -> ()) -> \(a : a) -o
+     •                                     ┬────── 
+     •                                     ╰╸ variable bound here of type a
+     •
+   3 │       A -> (),
+     •       ┬────── 
+     •       ╰╸ variable not consumed in this branch
+   4 │       B -> f a   -- Error: a is not consumed in first branch, but in second.
+     •       ┬──────┬ 
+     •       │      ╰╸ variable consumed here
+     •       ╰╸ variable consumed in this branch
+─────╯

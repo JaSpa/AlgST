@@ -1,3 +1,10 @@
-1:10: error:
-	 Cannot deduce type of parameter y in lambda abstraction at 1:9
-	 Please provide a type annotation.
+[error]: ambigous type
+     ╭──▶ «input»@1:10-1:11
+     │
+   1 │ let x = \y -> y in x 10
+     •         ┬┬───── 
+     •         │╰╸ cannot deduce type of lambda parameter
+     •         ╰╸ in lambda abstraction
+     •
+     │ Hint: Provide a type signature.
+─────╯

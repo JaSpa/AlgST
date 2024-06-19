@@ -1,3 +1,10 @@
-1:16: error:
-	 Incomplete case. Missing branch:
-	    False
+[error]: incomplete pattern match
+     ╭──▶ «input»@1:16-3:2
+     │
+   1 │ ╭┤ \(b : Bool) -> case b of {
+   2 │ │    True -> (),
+   3 │ ├┤ }
+     • │ 
+     • ╰╸ add a branch for
+     •    ResolvedName (Name (ModuleName "") (Unqualified {getUnqualified = "False"})) (ModuleName "Builtin") (ResolvedId 6)
+─────╯

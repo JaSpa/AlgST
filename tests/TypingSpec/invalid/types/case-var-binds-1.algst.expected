@@ -1,2 +1,8 @@
-2:3: error:
-	 The constructor True should have no arguments, but has been given one
+[error]: invalid pattern: too many constructor arguments
+     ╭──▶ «input»@2:3-2:15
+     │
+   2 │   True x -> (),
+     •   ┬─────────── 
+     •   ╰╸ constructor should have no arguments, but has been given one
+     •      argument
+─────╯

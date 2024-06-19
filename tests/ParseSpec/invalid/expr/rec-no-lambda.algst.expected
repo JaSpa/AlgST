@@ -1,3 +1,16 @@
-1:16: error:
-	 • a ‘rec’ expression's right-hand side must consist of a lambda abstraction.
-	 • a ‘rec’ expression must bind at least one non-type parameter in their right-hand side lambda abstraction.
+[error]: invalid ‘rec’ expression
+     ╭──▶ «input»@1:16-1:17
+     │
+   1 │ rec go : Int = 5
+     •                ┬
+     •                ╰╸ rec right-hand side is not a lambda abstraction
+     •
+─────┼──▶ «unknown location»@1:1-1:1
+     │
+   1 │ <no line>
+     • 
+     • ╰╸ this rec expression
+     •
+     │ Hint: a rec expression's right-hand side must consist of a lambda
+     │       abstraction binding a term variable.
+─────╯

@@ -1,2 +1,7 @@
-2:3: error:
-	 Branches of a receiving case must bind exactly one variable.
+[error]: invalid receiving ‘case’ branch
+     ╭──▶ «input»@2:3-2:18
+     │
+   2 │   (a, b) -> a + b
+     •   ┬──────────────
+     •   ╰╸ must bind exactly one variable
+─────╯

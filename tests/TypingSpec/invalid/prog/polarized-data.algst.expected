@@ -1,3 +1,9 @@
-2:15: error:
-	 Unexpected kind P for type -Int
-	 Expected a subkind of TU
+[error]: kind mismatch
+     ╭──▶ «input»@2:15-2:19
+     │
+   2 │     = NotAMsg -Int
+     •               ┬───
+     •               ╰╸ type has kind P
+     •
+     │ Hint: Expected a subkind of TU.
+─────╯

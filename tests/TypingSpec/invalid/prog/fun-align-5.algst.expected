@@ -1,3 +1,10 @@
-2:6: error:
-	 Binding of type variable a does not align with type
-	       Int -> forall (a:TU). a -> ()
+[error]: invalid function declaration
+     ╭──▶ «input»@2:6-2:7
+     │
+   1 │ foo : Int -> ∀(a:TU). a -> ()
+     •       ┬──────────────────────
+     •       ╰╸ does not align wit declared type
+   2 │ foo [a] _ _ = ()
+     •      ┬ 
+     •      ╰╸ unexpected binding of type variable
+─────╯

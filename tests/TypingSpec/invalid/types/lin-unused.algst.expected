@@ -1,4 +1,8 @@
-1:10: error:
-	 Linear variable a of type
-	       a
-	 is unused.
+[error]: linearity violated: missing use
+     ╭──▶ «input»@1:9-1:14
+     │
+   1 │ \[a:TL] (a:a) -> ()
+     •         ┬──── 
+     •         ├╸ linear variable is unused
+     •         ╰╸ variable bound here of type a
+─────╯

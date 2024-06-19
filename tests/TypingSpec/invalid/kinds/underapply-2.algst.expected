@@ -1,4 +1,8 @@
-1:15: error:
-	 Invalid type application
-	    D3 p
-	 Type constructor D3 needs 3 paramters, 1 provided.
+[error]: invalid type application
+     ╭──▶ «input»@1:15-1:17
+     │
+   1 │ forall (p:P). D3 p
+     •               ┬───
+     •               ├╸ 3 parameters
+     •               ╰╸ but one was given
+─────╯

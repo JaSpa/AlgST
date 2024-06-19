@@ -1,2 +1,7 @@
-2:3: error:
-	 The constructor (,) should have 2 arguments, but has been given none
+[error]: invalid pattern: too few constructor arguments
+     ╭──▶ «input»@2:3-2:11
+     │
+   2 │   (,) -> 0,
+     •   ┬─────── 
+     •   ╰╸ constructor should have 2 arguments, but has been given none
+─────╯

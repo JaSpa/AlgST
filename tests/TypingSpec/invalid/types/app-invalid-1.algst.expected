@@ -1,5 +1,9 @@
-1:15: error:
-	 Type of
-	    x
-	 is neither a function type nor convertible to a function type:
-	    Int
+[error]: not a function type
+     ╭──▶ «input»@1:15-1:16
+     │
+   1 │ \(x : Int) -> x 10
+     •               ┬ 
+     •               ╰╸ expected a function but this expression's type is not
+     •                  convertible to a function type:
+     •                  Int
+─────╯

@@ -1,4 +1,10 @@
-2:37: error:
-	 Multiple declarations of Nil
-	 Declared at: 1:37
-	              2:37
+[error]: duplicate declaration
+     ╭──▶ «input»@1:37-1:40
+     │
+   1 │ data SnocList = Snoc SnocList Int | Nil
+     •                                     ┬──
+     •                                     ╰╸ first declaration
+   2 │ data ConsList = Cons ConsList Int | Nil
+     •                                     ┬──
+     •                                     ╰╸ second declaration
+─────╯

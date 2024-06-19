@@ -1,3 +1,9 @@
-1:7: error:
-	 Unexpected kind TL for type D0_TL
-	 Expected a subkind of TU
+[error]: kind mismatch
+     ╭──▶ «input»@1:7-1:12
+     │
+   1 │ Id_TU D0_TL
+     •       ┬────
+     •       ╰╸ type has kind TL
+     •
+     │ Hint: Expected a subkind of TU.
+─────╯

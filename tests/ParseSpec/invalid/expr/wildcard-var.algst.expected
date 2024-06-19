@@ -1,2 +1,7 @@
-1:19: error:
-	 Unexpected token _
+[error]: parse error
+     ╭──▶ «input»@1:19-1:20
+     │
+   1 │ let _ = global in _
+     •                   ┬
+     •                   ╰╸ unexpected token
+─────╯

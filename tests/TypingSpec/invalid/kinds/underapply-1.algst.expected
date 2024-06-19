@@ -1,4 +1,8 @@
-1:1: error:
-	 Invalid type application
-	    Id_TL
-	 Type constructor Id_TL needs 1 parameter, 0 provided.
+[error]: invalid type application
+     ╭──▶ «unknown location»@1:1-1:1
+     │
+   1 │ <no line>
+     • 
+     • ├╸ one parameter
+     • ╰╸ but none were given
+─────╯

@@ -1,4 +1,10 @@
-3:3: error:
-	 Duplicate case alternative True
-	 Branches at: 2:3
-	              3:3
+[error]: duplicate case alternative
+     ╭──▶ «input»@2:3-2:12
+     │
+   2 │   True -> 1,
+     •   ┬──────── 
+     •   ╰╸ first occurence
+   3 │   True -> 2,
+     •   ┬──────── 
+     •   ╰╸ second occurence
+─────╯

@@ -1,4 +1,8 @@
-1:6: error:
-	 Conflicting bindings for a
-	 Bound at: 1:6
-	           1:9
+[error]: duplicate binding
+     ╭──▶ «input»@1:6-1:7
+     │
+   1 │ let (a, a) = global in a
+     •      ┬  ┬ 
+     •      ╰───╸ first binding
+     •         ╰╸ second binding
+─────╯

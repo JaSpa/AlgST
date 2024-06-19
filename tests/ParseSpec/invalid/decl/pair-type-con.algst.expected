@@ -1,3 +1,9 @@
-1:7: error:
-	 Pair constructor (,) cannot be used as a type constructor.
-	 It can only appear in patterns and with ‘select’.
+[error]: misplaced pair constructor
+     ╭──▶ «input»@1:7-1:10
+     │
+   1 │ foo : (,) Int Int
+     •       ┬── 
+     •       ╰╸ cannot appear as a type constructor
+     •
+     │ Hint: Use the ‘(…, …)’ form when outside of patterns and ‘select’
+─────╯
