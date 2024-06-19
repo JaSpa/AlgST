@@ -237,7 +237,7 @@ checkModule :: CheckContext -> Module Rn -> ValidateT Errors Fresh TcModule
 checkModule ctxt p = checkWithModule ctxt p \_ -> pure -- `const pure` does not work because of simplified subsumption.
 
 checkResultAsRnM :: ValidateT Errors Fresh a -> RnM a
-checkResultAsRnM = mapValidateT lift >>> mapErrors (undefined runErrors)
+checkResultAsRnM = mapValidateT lift >>> mapErrors runErrors
 
 useVar :: (MonadValidate Errors m) => SrcRange -> ProgVar TcStage -> Var -> m Var
 useVar loc name v = case varUsage v of
