@@ -24,11 +24,6 @@
           echo -en '\033[m'
           exec stack build --fast --test "$@"
         '';
-
-        # hpack = pkgs.haskell.lib.overrideCabal pkgs.haskellPackages.hpack {
-        #   version = "0.35.1";
-        #   sha256 = "sha256-j9D/fM99BI3JggMf64QzxejFrLUi0HHuIGmT1Pky7MI=";
-        # };
       in {
         packages.vimPlugin = pkgs.vimUtils.buildVimPlugin {
           name = "algst-vim";
@@ -37,7 +32,7 @@
 
         devShells.default = pkgs.mkShellNoCC {
           name = "algst-dev-shell";
-          packages = [ accept-test run-tests ];
+          packages = [ accept-test run-tests pkgs.haskellPackages.hpack ];
         };
       });
 }
