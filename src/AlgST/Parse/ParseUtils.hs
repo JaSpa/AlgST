@@ -77,6 +77,7 @@ import AlgST.Syntax.Tree qualified as T
 import AlgST.Util.ErrorMessage
 import AlgST.Util.Lenses qualified as L
 import Control.Arrow
+import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Validate

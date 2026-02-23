@@ -24,7 +24,6 @@ import AlgST.Util.PartialOrd
 import Control.Applicative
 import Control.Monad
 import Data.Coerce
-import Data.Foldable
 import Data.Hashable
 import Data.Map.Strict qualified as Map
 import Data.Monoid

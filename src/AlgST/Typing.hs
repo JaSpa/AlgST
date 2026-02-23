@@ -87,8 +87,8 @@ import AlgST.Util.ErrorMessage hiding (Errors)
 import AlgST.Util.PartialOrd
 import Control.Applicative
 import Control.Category ((>>>))
+import Control.Monad
 import Control.Monad.Eta
-import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Control.Monad.Trans.Maybe
@@ -238,7 +238,7 @@ checkModule ctxt p = checkWithModule ctxt p \_ -> pure -- `const pure` does not 
 checkResultAsRnM :: ValidateT Errors Fresh a -> RnM a
 checkResultAsRnM = mapValidateT lift >>> mapErrors runErrors
 
-useVar :: MonadValidate Errors m => Pos -> ProgVar TcStage -> Var -> m Var
+useVar :: (MonadValidate Errors m) => Pos -> ProgVar TcStage -> Var -> m Var
 useVar loc name v = case varUsage v of
   UnUsage ->
     pure v
@@ -464,7 +464,7 @@ checkAlignedBinds fullTy allVs e = go fullTy fullTy allVs
       Error.fatal $ uncurryL Error.mismatchedBind v t
 
 expectNominalKind ::
-  MonadValidate Errors m =>
+  (MonadValidate Errors m) =>
   Pos ->
   String ->
   TypeVar TcStage ->
@@ -635,7 +635,7 @@ kicheck t k = do
   expectSubkind t k' [k]
   pure t'
 
-checkSubkind :: MonadValidate Errors m => RnType -> K.Kind -> K.Kind -> m ()
+checkSubkind :: (MonadValidate Errors m) => RnType -> K.Kind -> K.Kind -> m ()
 checkSubkind t k1 k2 = errorIf (k1 </=? k2) (Error.unexpectedKind t k1 [k2])
 
 tysynth :: RnExp -> TypeM (TcExp, TcType)
@@ -1057,7 +1057,7 @@ checkSessionCase loc cases patTy s mExpectedTy = do
 
 checkCaseExpr ::
   forall f.
-  Traversable f =>
+  (Traversable f) =>
   Pos ->
   Bool ->
   RnCaseMap ->
@@ -1132,8 +1132,9 @@ newtype Branched r a
   = Branched (ValidateT Errors (StateT (BranchSt r) (ReaderT TypeEnv TypeM)) a)
   deriving newtype (Functor, Applicative, Monad)
 
-data BranchSt r = forall b.
-  Error.BranchSpec b =>
+data BranchSt r
+  = forall b.
+  (Error.BranchSpec b) =>
   BranchSt
   { -- | Variables which have been consumed in at least one of the encountered
     -- branches.
@@ -1147,7 +1148,7 @@ data BranchSt r = forall b.
   }
 
 -- | A variable consumed in a branch.
-data BranchConsumed = forall b. Error.BranchSpec b => BranchConsumed !b !Var !Pos
+data BranchConsumed = forall b. (Error.BranchSpec b) => BranchConsumed !b !Var !Pos
 
 checkOrSynth :: RnExp -> Maybe TcType -> TypeM (TcExp, TcType)
 checkOrSynth e Nothing = tysynth e
@@ -1158,7 +1159,7 @@ checkOrSynth e (Just t) = (,t) <$> tycheck e t
 -- Multiple calls to @checkBranch@ have to agree in the set of consumed linear
 -- variables else an error is emitted.
 checkBranch ::
-  Error.BranchSpec b => b -> (Maybe r -> TypeM (a, r)) -> Branched r a
+  (Error.BranchSpec b) => b -> (Maybe r -> TypeM (a, r)) -> Branched r a
 checkBranch thisBranch m = Branched do
   initEnv <- ask
   branchSt <- get
@@ -1261,7 +1262,7 @@ checkConsumedOverlap m1 other1 m2 other2 = Error.adds errors
       errs m1 m2 other2 ++ errs m2 m1 other1
     errs x y other =
       [ Error.branchedConsumeDifference name var consume loc other
-        | (name, BranchConsumed consume var loc) <- Map.toList (x `Map.difference` y)
+      | (name, BranchConsumed consume var loc) <- Map.toList (x `Map.difference` y)
       ]
 
 litType :: Pos -> E.Lit -> TcType
@@ -1329,7 +1330,7 @@ tysynthTyBind synth p (K.Bind p' v k a) = do
   pure (K.Bind p' v k a', allT)
 
 tycheckTyBind ::
-  HasKiEnv env =>
+  (HasKiEnv env) =>
   (a -> TcType -> TcM env st b) ->
   RnExp ->
   K.Bind TcStage a ->
@@ -1353,7 +1354,7 @@ checkRecLam = go
     go abs@(E.RecTypeAbs p b) =
       fmap (E.RecTypeAbs p) . tycheckTyBind go (E.RecAbs abs) b
 
-unrestrictedLoc :: HasPos a => a -> K.Multiplicity -> Maybe Pos
+unrestrictedLoc :: (HasPos a) => a -> K.Multiplicity -> Maybe Pos
 unrestrictedLoc p K.Un = Just $! pos p
 unrestrictedLoc _ K.Lin = Nothing
 
@@ -1398,14 +1399,14 @@ withProgVarBinds !mUnArrLoc vtys action = etaTcM do
     -- consumed.
     Error.adds
       [ Error.invalidConsumed arrLoc name var usageLoc
-        | (name, (var, usageLoc)) <- Map.toList (filterAdditionalConsumed outerVars resultVars)
+      | (name, (var, usageLoc)) <- Map.toList (filterAdditionalConsumed outerVars resultVars)
       ]
 
   -- Emit an error for any of the new variables which are still 'UnusedLin'.
   Error.adds
     [ Error.missingUse name var
-      | (name, var@Var {varUsage = LinUnunsed}) <-
-          Map.toList (resultVars `Map.intersection` newVars)
+    | (name, var@Var {varUsage = LinUnunsed}) <-
+        Map.toList (resultVars `Map.intersection` newVars)
     ]
 
   -- Continue with the variables as returned from the inner computation because
@@ -1494,7 +1495,7 @@ tycheck e u = case e of
     requireSubtype e t u
     pure e'
 
-requireSubtype :: MonadValidate Errors m => RnExp -> TcType -> TcType -> m ()
+requireSubtype :: (MonadValidate Errors m) => RnExp -> TcType -> TcType -> m ()
 requireSubtype e t1 t2 = do
   nf1 <- normalize t1
   nf2 <- normalize t2
@@ -1503,12 +1504,12 @@ requireSubtype e t1 t2 = do
 
 -- | Returns the normalform of the given type or throws an error at the given
 -- position.
-normalize :: MonadValidate Errors m => TcType -> m TcType
+normalize :: (MonadValidate Errors m) => TcType -> m TcType
 normalize t = case nf t of
   Just t' -> pure t'
   Nothing -> Error.fatal (Error.noNormalform t)
 
-bindTyVar :: HasKiEnv env => TypeVar TcStage -> K.Kind -> env -> env
+bindTyVar :: (HasKiEnv env) => TypeVar TcStage -> K.Kind -> env -> env
 bindTyVar !v !k = bindTyVars $ Identity (v, k)
 
 bindTyVars :: (HasKiEnv env, Foldable f) => f (TypeVar TcStage, K.Kind) -> env -> env
@@ -1516,16 +1517,16 @@ bindTyVars vars = kiEnvL . tcKindEnvL <>~ varMap
   where
     varMap = foldl' (\m (v, k) -> Map.insert v k m) Map.empty vars
 
-bindParams :: HasKiEnv env => Params TcStage -> env -> env
+bindParams :: (HasKiEnv env) => Params TcStage -> env -> env
 bindParams = bindTyVars . fmap (first unL)
 
-errorIf :: MonadValidate Errors m => Bool -> Diagnostic -> m ()
+errorIf :: (MonadValidate Errors m) => Bool -> Diagnostic -> m ()
 errorIf True e = Error.add e
 errorIf _ _ = pure ()
 
 -- | @expectSubkind t k ks@ verifies that @k@ is a subkind of any of the kinds
 -- @ks@. If not it errors and blames @t@ for the wrong kind @k@.
-expectSubkind :: MonadValidate Errors m => RnType -> K.Kind -> [K.Kind] -> m ()
+expectSubkind :: (MonadValidate Errors m) => RnType -> K.Kind -> [K.Kind] -> m ()
 expectSubkind t actualKind allowedKinds =
   errorIf
     (not $ any (actualKind <=?) allowedKinds)

@@ -14,25 +14,25 @@ data-files:
   - examples/*/*
 
 dependencies:
-- base >= 4.16.4.0 && < 5
-- algebraic-graphs ^>=0.6
+- base >= 4.20 && < 5
+- algebraic-graphs
 - ansi-terminal
 - array
 - async
 - call-stack
-- containers >=0.5.9
+- containers
 - deepseq
-- directory >= 1.3.2.0
+- directory
 - dlist
-- filepath >= 1.4.2
+- filepath
 - foldl
 - generic-lens-lite
 - hashable
 - indexed-traversable
-- lens-family >= 2.1.0 && < 3
+- lens-family
 - lens-family-th
 - monad-validate
-- mtl >= 2.2.1
+- mtl
 - optparse-applicative
 - scheduler
 - semialign
@@ -64,6 +64,7 @@ default-extensions:
   - BlockArguments
   - ImportQualifiedPost
   - LambdaCase
+  - TypeOperators
 
 flags:
   benchmarker:

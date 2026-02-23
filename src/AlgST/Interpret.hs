@@ -58,7 +58,9 @@ import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Concurrent.STM
 import Control.Exception
+import Control.Monad
 import Control.Monad.Eta
+import Control.Monad.Fix
 import Control.Monad.Reader
 import Control.Monad.State.Strict hiding (evalState)
 import Data.DList qualified as DL
@@ -169,7 +171,7 @@ instance Exception InterpretError where
         prettyCallStack cs
       ]
 
-failInterpet :: HasCallStack => Pos -> String -> EvalM a
+failInterpet :: (HasCallStack) => Pos -> String -> EvalM a
 failInterpet !p = liftIO . throwIO . InterpretError callStack p
 
 newtype ChannelId = ChannelId Word
@@ -247,7 +249,7 @@ instance Show Value where
       Char c -> unary "Char" c
       Unit -> [showString "Unit"]
     where
-      unary :: Show a => String -> a -> [ShowS]
+      unary :: (Show a) => String -> a -> [ShowS]
       unary label a = [showString label, showsPrec 11 a]
       parenWords :: [ShowS] -> ShowS
       parenWords [x] = x
@@ -316,7 +318,7 @@ debugLogM msg = etaEvalM do
 -- is colorized based on a color unique to this thread. If either no
 -- 'ThreadName' is given or the wrapped value is 'Plain' the message will be
 -- printed without colors.
-debugLog :: MonadIO m => Maybe ThreadName -> Settings -> String -> m ()
+debugLog :: (MonadIO m) => Maybe ThreadName -> Settings -> String -> m ()
 debugLog mname sett msg = liftIO do
   when (isJust (evalDebugMessages sett)) do
     let msg' = case mname of
@@ -481,7 +483,7 @@ evalLiteral = \case
   E.String s -> String s
 
 -- | Evaluates the named top-level expression.
-evalName :: HasCallStack => Name Resolved Values -> EvalM Value
+evalName :: (HasCallStack) => Name Resolved Values -> EvalM Value
 evalName = lookupEnv ZeroPos
 
 -- | Evaluates the given expression.
@@ -567,19 +569,19 @@ eval =
     E.Exp (ValueCase p e cases) -> do
       val <- eval e
       if
-          | Con con vs <- val,
-            Just b <- Map.lookup con (E.casesPatterns cases) ->
-              -- Bind the payload values.
-              evalBranch b vs
-          | Just b <- E.casesWildcard cases ->
-              -- We have to allow any value to appear as the scrutinee in a case
-              -- expression since `let` is desugared this way.
-              --
-              -- Bind the scrutinee itself.
-              evalBranch b [val]
-          | otherwise ->
-              -- Something went wrong somewhere.
-              failInterpet p $ "unmatchable value " ++ show val
+        | Con con vs <- val,
+          Just b <- Map.lookup con (E.casesPatterns cases) ->
+            -- Bind the payload values.
+            evalBranch b vs
+        | Just b <- E.casesWildcard cases ->
+            -- We have to allow any value to appear as the scrutinee in a case
+            -- expression since `let` is desugared this way.
+            --
+            -- Bind the scrutinee itself.
+            evalBranch b [val]
+        | otherwise ->
+            -- Something went wrong somewhere.
+            failInterpet p $ "unmatchable value " ++ show val
 
     --
     E.Exp (RecvCase p e cases) -> do
@@ -593,7 +595,7 @@ eval =
       localBinds [(v, chanVal) | _ :@ v <- toList (E.branchBinds b)] do
         eval $ E.branchExp b
 
-evalBranch :: Foldable f => E.CaseBranch f Tc -> [Value] -> EvalM Value
+evalBranch :: (Foldable f) => E.CaseBranch f Tc -> [Value] -> EvalM Value
 evalBranch b vs =
   localBinds (zip (unL <$> toList (E.branchBinds b)) vs) do
     eval $ E.branchExp b
@@ -715,7 +717,7 @@ localBinds binds = localEnv \e -> Right `fmap` Map.fromList binds <> e
 
 -- | Looks for the given variable in the current environment. If it resovles to
 -- a top-level expression it will be evaluated before returning.
-lookupEnv :: HasCallStack => Pos -> ProgVar TcStage -> EvalM Value
+lookupEnv :: (HasCallStack) => Pos -> ProgVar TcStage -> EvalM Value
 lookupEnv p v =
   askEnv
     >>= maybe (failInterpet p err) pure . Map.lookup v
@@ -771,5 +773,5 @@ instance
   buildClosureS d body = Closure (d "") \arg ->
     pure $ buildClosureS (d . showChar ' ' . showsPrec 11 (unL arg)) (body arg)
 
-buildClosure :: BuildClosure a => String -> a -> Value
+buildClosure :: (BuildClosure a) => String -> a -> Value
 buildClosure = buildClosureS . showString

@@ -79,6 +79,7 @@ import Algebra.Graph.AdjacencyMap.Algorithm qualified as G (Cycle)
 import Control.Applicative
 import Control.Category ((>>>))
 import Control.Exception
+import Control.Monad
 import Control.Monad.Cont
 import Control.Monad.IO.Unlift
 import Control.Monad.Reader
@@ -513,8 +514,8 @@ noteDependencies ::
 noteDependencies depsRef name fp parsed = do
   let depList =
         [ (ImportLocation (p @- fp), target)
-          | p :@ Import {importTarget = target} <-
-              pxImports $ resultExtra parsed
+        | p :@ Import {importTarget = target} <-
+            pxImports $ resultExtra parsed
         ]
   -- Update the dependency graph. This step also signals to any other workers
   -- that this worker will be responsible for delegating parsing of any
@@ -578,7 +579,7 @@ setError = do
   liftIO $ writeIORef ref True
 
 -- | Report the errors to the user.
-reportErrors :: Foldable f => FilePath -> f Diagnostic -> Driver ()
+reportErrors :: (Foldable f) => FilePath -> f Diagnostic -> Driver ()
 reportErrors fp diags
   | null diags =
       pure ()
@@ -592,7 +593,7 @@ reportErrors fp diags
 
 -- | Like 'reportErrors' but the module's file path is looked up inside
 -- 'driverModules'. An unknown module results in an empty 'FilePath'.
-reportModuleErrors :: Foldable f => ModuleName -> f Diagnostic -> Driver ()
+reportModuleErrors :: (Foldable f) => ModuleName -> f Diagnostic -> Driver ()
 reportModuleErrors m diags = do
   pathMap <- liftIO . readIORef =<< asksState driverModules
   let mpath = HM.lookup m pathMap
@@ -634,7 +635,7 @@ askOutputProgress :: Driver (OutputHandle, OutputMode)
 askOutputProgress = askOutputVerbose (not . driverQuietProgress)
 
 maybeCounter ::
-  MonadIO m =>
+  (MonadIO m) =>
   Counter ->
   String ->
   ModuleName ->
@@ -686,5 +687,5 @@ compactResults = depsVertices >>> HML.mapMaybe id
 resultEvalEnvironment :: Result Tc -> I.Env
 resultEvalEnvironment = I.programEnvironment . resultModule
 
-mergedResultEvalEnvironment :: Foldable f => f (Result Tc) -> I.Env
+mergedResultEvalEnvironment :: (Foldable f) => f (Result Tc) -> I.Env
 mergedResultEvalEnvironment = foldMap resultEvalEnvironment

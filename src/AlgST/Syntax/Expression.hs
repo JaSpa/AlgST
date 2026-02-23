@@ -58,7 +58,6 @@ import AlgST.Syntax.Name
 import AlgST.Syntax.Phases
 import AlgST.Syntax.Type qualified as T
 import Control.Applicative
-import Data.Foldable
 import Data.Functor.Identity
 import GHC.Generics (Generic)
 import Instances.TH.Lift ()

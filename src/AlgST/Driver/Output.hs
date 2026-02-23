@@ -58,8 +58,8 @@ import Control.Concurrent.Async qualified as Async
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Foldl qualified as L
+import Control.Monad
 import Control.Monad.IO.Unlift
-import Control.Monad.Reader
 import Data.Coerce
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
@@ -98,14 +98,14 @@ isNullHandle _ = False
 --
 -- The 'OutputHandle' provided to the sub-computation must not be used once the
 -- it returns.
-captureOutput :: MonadUnliftIO m => (OutputHandle -> m a) -> m (String, a)
+captureOutput :: (MonadUnliftIO m) => (OutputHandle -> m a) -> m (String, a)
 captureOutput = withAsyncOutput runOutputCollect
 
 -- | Writes all output written to the 'OutputHandle' to the provided 'Handle'.
 --
 -- The 'OutputHandle' provided to the sub-computation must not be used once the
 -- it returns.
-withOutput :: MonadUnliftIO m => Bool -> Handle -> (OutputHandle -> m a) -> m a
+withOutput :: (MonadUnliftIO m) => Bool -> Handle -> (OutputHandle -> m a) -> m a
 withOutput !allowAnsi h = fmap snd <$> withAsyncOutput (runOutputHandle allowAnsi h)
 
 -- | An exception thrown by the consumer of a 'OutputHandle'.
@@ -178,7 +178,7 @@ withScopedLink target m = do
         -- A successfull results indicates termination.
         Right _ -> pure ()
 
-withAsyncOutput :: MonadUnliftIO m => (ActionBuffer -> IO a) -> (OutputHandle -> m b) -> m (a, b)
+withAsyncOutput :: (MonadUnliftIO m) => (ActionBuffer -> IO a) -> (OutputHandle -> m b) -> m (a, b)
 withAsyncOutput consumer producer =
   -- Retrieve the necessary information to run `m` actions inside `IO`.
   askRunInIO >>= \runIO -> liftIO do
@@ -207,33 +207,33 @@ withAsyncOutput consumer producer =
         Left e -> throwIO (OutputException e)
         Right a -> pure (a, b)
 
-outputStr :: MonadIO m => OutputHandle -> String -> m ()
+outputStr :: (MonadIO m) => OutputHandle -> String -> m ()
 outputStr b = outputS b . showString
 
-outputStrLn :: MonadIO m => OutputHandle -> String -> m ()
+outputStrLn :: (MonadIO m) => OutputHandle -> String -> m ()
 outputStrLn b s = outputS b $ showString s . showChar '\n'
 
 outputShow :: (MonadIO m, Show a) => OutputHandle -> a -> m ()
 outputShow b = outputLnS b . shows
 
-outputLnS :: MonadIO m => OutputHandle -> ShowS -> m ()
+outputLnS :: (MonadIO m) => OutputHandle -> ShowS -> m ()
 outputLnS h s = outputS h (s . showChar '\n')
 
-outputS :: MonadIO m => OutputHandle -> ShowS -> m ()
+outputS :: (MonadIO m) => OutputHandle -> ShowS -> m ()
 outputS (OutputHandle buf) =
   liftIO . writeActionBuffer buf . WriteMessage
 
-outputError :: MonadIO m => OutputHandle -> OutputMode -> String -> m ()
+outputError :: (MonadIO m) => OutputHandle -> OutputMode -> String -> m ()
 outputError out mode =
   outputLnS out . applyStyle mode (styleFG ANSI.Red) . showString
 
 -- | Replaces the current sticky message with the given string.
-outputSticky :: MonadIO m => OutputHandle -> String -> m ()
+outputSticky :: (MonadIO m) => OutputHandle -> String -> m ()
 outputSticky (OutputHandle buf) =
   liftIO . writeActionBuffer buf . SetSticky . Sticky
 
 -- | Clears the current sticky message.
-clearSticky :: MonadIO m => OutputHandle -> m ()
+clearSticky :: (MonadIO m) => OutputHandle -> m ()
 clearSticky h = outputSticky h ""
 
 -- $sticky
@@ -350,9 +350,7 @@ runOutputHandle allowAnsi h buf = bracket prepare id (const run)
     run = do
       -- If we are allowed to use ANSI escapes and the handle looks like it
       -- supports it we enable sticky messages.
-      useSticky <-
-        (allowAnsi &&) . fromMaybe False
-          <$> ANSI.hSupportsANSIWithoutEmulation h
+      useSticky <- (allowAnsi &&) <$> ANSI.hNowSupportsANSI h
       runOutput (\_ -> writeChunk useSticky) () useSticky buf
 
     writeChunk :: Bool -> ShowS -> IO ()
@@ -415,16 +413,16 @@ zeroCounter :: CounterState
 zeroCounter = CounterState 0 0 0 ""
 
 -- | Creates a new counter starting from the given initial 'CounterState'.
-newCounter :: MonadIO m => OutputHandle -> CounterState -> m Counter
+newCounter :: (MonadIO m) => OutputHandle -> CounterState -> m Counter
 newCounter handle !st = liftIO $ Counter handle <$> newMVar st
 
 -- | Creates a new counter starting from 'zeroCounter'.
-newZeroCounter :: MonadIO m => OutputHandle -> m Counter
+newZeroCounter :: (MonadIO m) => OutputHandle -> m Counter
 newZeroCounter handle = newCounter handle zeroCounter
 
 -- | Create a new counter starting from the given state and immediately output
 -- the first message.
-newCounterStart :: MonadIO m => OutputHandle -> CounterState -> m Counter
+newCounterStart :: (MonadIO m) => OutputHandle -> CounterState -> m Counter
 newCounterStart handle st = liftIO do
   cntr <- newCounter handle st
   cntr <$ outputCounter cntr st
@@ -452,17 +450,17 @@ outputCounter :: Counter -> CounterState -> IO ()
 outputCounter (Counter handle _) st =
   outputSticky handle $ renderCounter st ""
 
-counterUpdate :: MonadIO m => Counter -> (CounterState -> CounterState) -> m ()
+counterUpdate :: (MonadIO m) => Counter -> (CounterState -> CounterState) -> m ()
 counterUpdate cntr@(Counter _ stVar) f =
   liftIO $ modifyMVar_ stVar \st -> do
     let !st' = f st
     outputCounter cntr st'
     pure st'
 
-counterDone :: MonadIO m => Counter -> m ()
+counterDone :: (MonadIO m) => Counter -> m ()
 counterDone (Counter handle _) = clearSticky handle
 
-wrapCounter :: MonadIO m => Counter -> String -> m a -> m a
+wrapCounter :: (MonadIO m) => Counter -> String -> m a -> m a
 wrapCounter c title m = counterUpdate c start *> m <* counterUpdate c end
   where
     start = counterRunningL +~ 1 >>> counterTitleL .~ title

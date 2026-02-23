@@ -22,6 +22,7 @@ where
 import AlgST.Syntax.Decl (Params)
 import AlgST.Syntax.Name
 import Control.Monad.Eta
+import Control.Monad.Fix
 import Control.Monad.Reader
 import Control.Monad.State.Strict
 import Data.Bitraversable

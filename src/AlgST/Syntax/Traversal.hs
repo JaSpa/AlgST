@@ -66,7 +66,6 @@ import Control.Category ((>>>))
 import Control.Monad.Eta
 import Control.Monad.Trans.Reader
 import Data.Bitraversable
-import Data.Foldable
 import Data.Functor.Classes
 import Data.Functor.Compose
 import Data.Functor.Identity
