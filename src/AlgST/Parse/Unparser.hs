@@ -1,5 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -36,8 +37,9 @@ import Data.Bifunctor
 import Data.Foldable
 import Data.Functor.Identity
 import Data.HashMap.Strict qualified as HM
-import Data.List (intercalate)
+import Data.List (intercalate, sortBy)
 import Data.Map.Strict qualified as Map
+import Data.Ord
 import Data.Void
 
 instance Show K.Multiplicity where
@@ -145,7 +147,14 @@ instance (Unparse (T.XType x)) => Show (T.Type x) where
 instance (Unparse (T.XType x)) => Unparse (T.Type x) where
   unparse (T.Unit _) = (maxRator, "()")
   unparse (T.Var _ a) = (maxRator, pprName a)
-  unparse (T.Con _ a) = (maxRator, pprName a)
+  unparse (T.Con _ a Nothing) = (maxRator, pprName a)
+  unparse (T.Con _ a (Just T.ProtocolSubset {..})) = do
+    let complementFlag = if subsetComplement then "^" else ""
+    let prettyCon x = (maxRator, pprName a ++ "[" ++ complementFlag ++ x ++ "]")
+    let sortedConstructors = sortBy (comparing snd) $ Map.toList subsetConstructors
+    if null subsetConstructors
+      then prettyCon ""
+      else prettyCon $ " " ++ intercalate ", " (pprName . fst <$> sortedConstructors) ++ " "
   unparse (T.Session _ p t u) = (dotRator, show p ++ t' ++ "." ++ u')
     where
       t' = bracket (unparse t) Op.L dotRator

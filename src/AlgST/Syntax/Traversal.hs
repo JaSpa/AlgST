@@ -7,7 +7,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MagicHash #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
@@ -579,10 +581,11 @@ instance
         <*> traverseSyntax pxy b
     T.Var x v ->
       typeVariable pxy x v
-    T.Con x v ->
+    T.Con x v ps ->
       T.Con
         <$> traverseSyntax pxy x
         <*> useConstructor pxy (pos x) v
+        <*> traverse (traverseSyntax pxy) ps
     T.App x t u ->
       T.App
         <$> traverseSyntax pxy x
@@ -609,6 +612,11 @@ instance
   traverseSyntax pxy (K.Bind p v k t) =
     bindOne pxy v \v' ->
       K.Bind p v' k <$> traverseSyntax pxy t
+
+instance (XStage x ~ s, XStage y ~ t) => SynTraversable x y (T.ProtocolSubset s) (T.ProtocolSubset t) where
+  traverseSyntax pxy T.ProtocolSubset {..} = do
+    cons <- traverseNameMap pxy pure subsetConstructors
+    pure T.ProtocolSubset {subsetComplement, subsetConstructors = cons}
 
 traverseNameMap ::
   (SynTraversal f x y, SingI scope, HasPos a) =>

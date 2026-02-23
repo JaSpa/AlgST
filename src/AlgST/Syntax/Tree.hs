@@ -193,9 +193,9 @@ instance (T.ForallX LabeledTree x) => LabeledTree (T.Type x) where
       T.Var x v ->
         let label = "Type.Var " ++ describeName v
          in tree label [labeledTree x]
-      T.Con x v ->
+      T.Con x v ps ->
         let label = "Type.Con " ++ describeName v
-         in tree label [labeledTree x]
+         in tree label [labeledTree x, labeledTree ps]
       T.App x t1 t2 ->
         tree
           "Type.App"
@@ -212,6 +212,13 @@ instance (T.ForallX LabeledTree x) => LabeledTree (T.Type x) where
         tree
           "Type.Type"
           [labeledTree x]
+
+instance LabeledTree (T.ProtocolSubset x) where
+  labeledTree T.ProtocolSubset {..} =
+    [ tree
+        ("Type.ProtocolSubset complement=" ++ show subsetComplement)
+        [[leaf (describeName c)] | c <- Map.keys subsetConstructors]
+    ]
 
 instance (D.ForallDeclX LabeledTree x, T.ForallX LabeledTree x) => LabeledTree (D.TypeDecl x) where
   labeledTree =

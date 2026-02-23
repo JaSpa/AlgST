@@ -7,7 +7,7 @@ module AlgST.Rename.Phase
   )
 where
 
-import AlgST.Parse.Phase (ParsedBuiltin, ProtoSubset)
+import AlgST.Parse.Phase (ParsedBuiltin)
 import AlgST.Syntax.Decl qualified as D
 import AlgST.Syntax.Expression qualified as E
 import AlgST.Syntax.Module (Module)
@@ -63,7 +63,7 @@ type instance T.XCon     Rn = Pos
 type instance T.XApp     Rn = Pos
 type instance T.XDualof  Rn = Pos
 type instance T.XNegate  Rn = Pos
-type instance T.XType    Rn = ProtoSubset Rn
+type instance T.XType    Rn = Void
 
 type instance D.XAliasDecl    Rn = Pos
 type instance D.XDataDecl     Rn = Pos

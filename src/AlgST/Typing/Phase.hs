@@ -130,7 +130,7 @@ typeKind t = case t of
   T.Forall _ (K.Bind _ _ _ t) ->
     maybe malformed (K.Kind K.Top) (K.multiplicity (typeKind t))
   T.Var k _ -> unL k
-  T.Con x _ -> absurd x
+  T.Con x _ _ -> absurd x
   T.App x _ _ -> absurd x
   T.Dualof _ t -> typeKind t
   T.Negate _ _ -> K.P
@@ -150,7 +150,8 @@ type TcExp                 = E.Exp Tc
 type TcType                = T.Type Tc
 type TcBind                = E.Bind Tc
 type TcCaseMap f g         = E.CaseMap' f g Tc
-type TcModule             = Module Tc
+type TcModule              = Module Tc
+type TcProtocolSubset      = T.ProtocolSubset Resolved
 
 type TcStage               = Resolved
 type TcNameMap scope       = NameMapG TcStage scope

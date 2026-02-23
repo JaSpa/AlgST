@@ -283,18 +283,22 @@ checkTypeDecl name = \case
 typeConstructorsFromDecls :: TypesMap Rn -> TcNameMap Types TypeCon
 typeConstructorsFromDecls = fmap \case
   AliasDecl x ta -> LazyAlias (pos x) ta
-  DataDecl _ tn -> NominalTypeCon (nominalParams tn) (nominalKind tn)
-  ProtoDecl _ tn -> NominalTypeCon (nominalParams tn) (nominalKind tn)
+  DataDecl _ tn -> mkNominal tn
+  ProtoDecl _ tn -> mkNominal tn
+  where
+    mkNominal TypeNominal {..} =
+      NominalTypeCon nominalParams nominalKind (Map.keysSet nominalConstructors)
 
 applyTypeCon ::
   (HasKiEnv env, HasKiSt st) =>
   Pos ->
   NameR Types ->
   TypeCon ->
+  Maybe TcProtocolSubset ->
   [RnType] ->
   TcM env st (TcType, K.Kind)
-applyTypeCon loc name con args = case con of
-  NominalTypeCon params kind -> do
+applyTypeCon loc name con protoSub args = case con of
+  NominalTypeCon params kind tyCons -> do
     subs <- zipTypeParams loc name params args
     let typeRef =
           TypeRef
@@ -490,12 +494,12 @@ typeAppBase ::
   forall env st.
   RnType ->
   NonEmpty RnType ->
-  TcM env st (Pos, TypeVar TcStage, [RnType])
+  TcM env st (Pos, NameR Types, Maybe TcProtocolSubset, [RnType])
 typeAppBase = flip go
   where
-    go :: NonEmpty RnType -> RnType -> TcM env st (Pos, TypeVar TcStage, [RnType])
+    go :: NonEmpty RnType -> RnType -> TcM env st (Pos, NameR Types, Maybe TcProtocolSubset, [RnType])
     go us = \case
-      T.Con p c -> pure (p, c, toList us)
+      T.Con p c ps -> pure (p, c, ps, toList us)
       T.App _ t u -> go (u <| us) t
       t -> Error.fatal $ err us t
     err :: NonEmpty RnType -> RnType -> Diagnostic
@@ -505,9 +509,10 @@ kisynthTypeCon ::
   (HasKiEnv env, HasKiSt st) =>
   Pos ->
   TypeVar TcStage ->
+  Maybe TcProtocolSubset ->
   [RnType] ->
   TcM env st (TcType, K.Kind)
-kisynthTypeCon loc name args = do
+kisynthTypeCon loc name protoSub args = do
   mcon <- gets $ view $ kiStL . tcTypeConsL . at' name
   case mcon of
     Nothing ->
@@ -516,7 +521,7 @@ kisynthTypeCon loc name args = do
           ++ ": internal error: unknown type constructor "
           ++ pprName name
     Just con ->
-      applyTypeCon loc name con args
+      applyTypeCon loc name con protoSub args
 
 -- | Kind-checks the types against the parameter list. In case they differ in
 -- length an error is emitted.
@@ -536,10 +541,12 @@ zipTypeParams loc name ps0 ts0 = go 0 ps0 ts0
         ((v,) <$> kicheck a k)
         (go (n + 1) ps as)
     go !n ps as =
+      -- We ignore any potential protocol subset annotations here because this
+      -- does not matter for this error.
       Error.fatal $
         Error.typeConstructorNParams
           loc
-          (T.Con loc name :| ts0)
+          (T.Con loc name Nothing :| ts0)
           (n + length as)
           (n + length ps)
 
@@ -574,11 +581,11 @@ kisynth =
       mk <- asks $ view kiEnvL >>> tcKindEnv >>> Map.lookup v
       k <- Error.ifNothing (Error.unboundVar p v) mk
       pure (T.Var (p @- k) v, k)
-    T.Con p v -> do
-      kisynthTypeCon p v []
+    T.Con p v ps -> do
+      kisynthTypeCon p v ps []
     T.App _ t u -> do
-      (p, c, args) <- typeAppBase t (pure u)
-      kisynthTypeCon p c args
+      (p, c, ps, args) <- typeAppBase t (pure u)
+      kisynthTypeCon p c ps args
     T.Arrow p m t1 t2 -> do
       (t1', t2') <-
         -- Applicatively to get error messages from both branches.
@@ -627,9 +634,8 @@ kisynth =
     T.Negate p t -> do
       t' <- kicheck t K.P
       pure (T.Negate p t', K.P)
-    T.Type protoSubset ->
-      -- TODO: implement type checking for protocol subsets
-      undefined
+    T.Type x ->
+      absurd x
 
 kicheck :: (HasKiEnv env, HasKiSt st) => RnType -> K.Kind -> TcM env st TcType
 kicheck t k = do

@@ -51,45 +51,6 @@ instance SynTraversable Parse y ParsedBuiltin ParsedBuiltin where
 instance LabeledTree ParsedBuiltin where
   labeledTree _ = [leaf "BuiltinNew"]
 
-data ProtoSubset x = ProtoSubset
-  { -- | The base type constructor to which the subset is applied.
-    subsetCon :: Located (TypeVar (XStage x)),
-    -- | Location of the opening bracket of the subset notation.
-    subsetPos :: Pos,
-    -- | The given constructor names to restrict the protocol.
-    subsetNames :: [Located (ProgVar (XStage x))],
-    -- | 'True' if 'subsetNames' is to be interpreted as removing names,
-    -- 'False' if 'subsetNames' lists the only constructors contained in the
-    -- type.
-    subsetComplement :: !Bool
-  }
-  deriving stock (Lift)
-
-instance HasPos (ProtoSubset x) where
-  pos = pos . subsetCon
-
-instance Unparse (ProtoSubset x) where
-  unparse =
-    unparseConst . \ProtoSubset {..} -> do
-      let complementFlag = if subsetComplement then "^" else ""
-      let prettyCon x = pprName (unL subsetCon) ++ "[" ++ complementFlag ++ x ++ "]"
-      if null subsetNames
-        then prettyCon ""
-        else prettyCon $ " " ++ L.intercalate ", " (pprName . unL <$> subsetNames) ++ " "
-
-instance SynTraversable x y (ProtoSubset x) (ProtoSubset y) where
-  traverseSyntax pxy ps@ProtoSubset {subsetCon, subsetNames} = do
-    con <- traverseConstructor pxy subsetCon
-    names <- traverse (traverseConstructor pxy) subsetNames
-    pure ps {subsetCon = con, subsetNames = names}
-
-instance LabeledTree (ProtoSubset x) where
-  labeledTree ProtoSubset {..} =
-    [ tree
-        ("ProtoSubset " ++ describeName (unL subsetCon) ++ " complement=" ++ show subsetComplement)
-        (map labeledTree subsetNames)
-    ]
-
 {- ORMOLU_DISABLE -}
 type PExp = E.Exp Parse
 type PBind = E.Bind Parse
@@ -135,7 +96,7 @@ type instance T.XCon     Parse = Pos
 type instance T.XApp     Parse = Pos
 type instance T.XDualof  Parse = Pos
 type instance T.XNegate  Parse = Pos
-type instance T.XType    Parse = ProtoSubset Parse
+type instance T.XType    Parse = Void
 
 type instance D.XAliasDecl    Parse = Pos
 type instance D.XDataDecl     Parse = Pos

@@ -12,6 +12,7 @@
 module AlgST.Syntax.Type
   ( -- * Types
     Type (..),
+    ProtocolSubset (..),
 
     -- ** Polarity
     Polarity (..),
@@ -39,6 +40,7 @@ module AlgST.Syntax.Type
 where
 
 import AlgST.Syntax.Kind qualified as K
+import AlgST.Syntax.Name
 import AlgST.Syntax.Phases
 import GHC.Generics (Generic)
 import Language.Haskell.TH.Syntax (Lift)
@@ -123,15 +125,16 @@ data Type x
     End (XEnd x) !Polarity
   | -- | > Forall _ (K.Bind _ v k t)  ~ ∀(v:k). t
     Forall (XForall x) (K.Bind (XStage x) (Type x))
-  | -- | Var _ v                      ~ v
+  | -- | > Var _ v                    ~ v
     Var (XVar x) !(XTypeVar x)
-  | -- | Con _ c                      ~ c
-    Con (XCon x) !(XTypeVar x)
-  | -- | App _ t₁ t₂                  ~ t₁ t₂
+  | -- | > Con _ c Nothing            ~ c
+    --   > Con _ c (Just ps)          ~ c[ps]
+    Con (XCon x) !(XTypeVar x) (Maybe (ProtocolSubset (XStage x)))
+  | -- | > App _ t₁ t₂                ~ t₁ t₂
     App (XApp x) (Type x) (Type x)
-  | -- | Dualof _ t                   ~ dual t
+  | -- | > Dualof _ t                 ~ dual t
     Dualof (XDualof x) (Type x)
-  | -- | Negate _ t                   ~ -t
+  | -- | > Negate _ t                 ~ -t
     Negate (XNegate x) (Type x)
   | -- | Constructor extension. Depends on the instantiation of the 'XExp' type
     -- family.
@@ -141,3 +144,11 @@ data Type x
 deriving stock instance (ForallX Lift x) => Lift (Type x)
 
 deriving via Generically (Type x) instance (ForallX HasPos x) => HasPos (Type x)
+
+data ProtocolSubset stage = ProtocolSubset
+  { subsetComplement :: !Bool,
+    subsetConstructors :: !(NameMapG stage Values Pos)
+  }
+  deriving stock (Generic)
+
+deriving stock instance () => Lift (ProtocolSubset x)

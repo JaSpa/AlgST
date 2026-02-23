@@ -46,7 +46,7 @@ data Usage
     LinUsed Pos
 
 data TypeCon
-  = NominalTypeCon !(Params Resolved) !K.Kind
+  = NominalTypeCon !(Params Resolved) !K.Kind !(TcNameSet Values)
   | ResolvedAlias !(TypeAlias Tc) !K.Kind
   | LazyAlias !Pos !(TypeAlias Rn)
   | ExpandingAlias !Int

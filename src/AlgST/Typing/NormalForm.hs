@@ -41,7 +41,7 @@ nfs = go
     go = \case
       Unit k ->
         (Just (Unit k), Nothing)
-      Con x _ ->
+      Con x _ _ ->
         absurd x
       App x _ _ ->
         absurd x

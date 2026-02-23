@@ -525,22 +525,19 @@ polarised(t)
   | '+' polarised(t)   { $2 }
   | '-' polarised(t)   { T.Negate (pos $1) $2 :: PType }
 
-ConSequence1 :: { DL.DList (Located (ProgVar PStage)) }
-  : Constructor                   { DL.singleton $1 }
-  | ConSequence1 ',' Constructor  { DL.snoc $1 $3 }
+ConSequence1 :: { NameMap Values Pos }
+  : Constructor                   { Map.singleton (unL $1) (pos $1) }
+  | ConSequence1 ',' Constructor  { Map.insert (unL $3) (pos $3) $1 }
 
-ConSequence :: { [Located (ProgVar PStage)] }
-  : {- empty -}                   { [] }
-  | ConSequence1                  { DL.toList $1 }
-  | ConSequence1 ','              { DL.toList $1 }
+ConSequence :: { NameMap Values Pos }
+  : {- empty -}                   { Map.empty }
+  | ConSequence1                  { $1 }
+  | ConSequence1 ','              { $1 }
 
-TypeConOrSubset :: { PType }
-  : TypeName                              { uncurryL T.Con $1 }
-  | TypeName '[' opt('^') ConSequence ']' { T.Type ProtoSubset {
-      subsetCon = $1,
-      subsetPos = pos $2,
-      subsetNames = $4,
-      subsetComplement = isJust $3
+ProtocolSubset :: { T.ProtocolSubset Written }
+  : '[' opt('^') ConSequence ']' { T.ProtocolSubset {
+      T.subsetComplement = isJust $2,
+      T.subsetConstructors = $3
     } }
 
 TypeAtom :: { PType }
@@ -549,7 +546,7 @@ TypeAtom :: { PType }
   | '(' Type ',' TupleType ')'    { T.Pair (pos $1) $2 $4 }
   | end                           { uncurryL T.End $1 }
   | TypeVar                       { uncurryL T.Var $1 }
-  | TypeConOrSubset               { $1 }
+  | TypeName opt(ProtocolSubset)  { uncurryL T.Con $1 $2 }
   | '(' Type ')'                  { $2 }
 
 Type1 :: { PType }
