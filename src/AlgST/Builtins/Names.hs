@@ -9,10 +9,10 @@ import AlgST.Builtins.TH2
 import AlgST.Rename.Modules (ModuleMap)
 import AlgST.Syntax.Name
 import AlgST.Syntax.Operators
-import Data.Char qualified as C
+import AlgST.Util
 
 $( runDefines (ModuleName "Builtin") "builtinsPartialModuleMap" "builtinOperators" do
-     let prefix p s = p ++ C.toUpper (head s) : tail s
+     let prefix p s = p ++ capitalise s
      let parens x = Unqualified $ "(" ++ x ++ ")"
      let typ x = defineType (prefix "type" x) (Unqualified x)
      let con x = defineValue (prefix "con" x) (Unqualified x)

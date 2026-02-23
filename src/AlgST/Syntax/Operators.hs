@@ -35,7 +35,7 @@ data Precedence
   deriving (Eq, Ord, Enum, Bounded, Show, Lift)
 
 data Associativity = L | R | NA
-  deriving (Eq, Lift)
+  deriving (Show, Eq, Lift)
 
 type OperatorTable = HashMap (NameR Values) (Precedence, Associativity)
 
@@ -50,7 +50,7 @@ data OperatorSequence x
 
 deriving instance (E.ForallX Lift x, T.ForallX Lift x) => Lift (OperatorSequence x)
 
-instance E.ForallX HasPos x => HasPos (OperatorSequence x) where
+instance (E.ForallX HasPos x) => HasPos (OperatorSequence x) where
   pos = pos . NE.head . opSeqExpressions
 
 infixr 9 `opSeqCons`
@@ -83,3 +83,14 @@ sectionOperator ops = leftSection ops <|> rightSection ops
 
 isSection :: OperatorSequence x -> Bool
 isSection = isJust . sectionOperator
+
+-- | Given a parenthesized operator name returns the unparenthesized version.
+pprRawName :: ProgVar stage -> String
+pprRawName pv = do
+  let name = pprName pv
+  let stripClosingParen mkNm ")" = mkNm ""
+      stripClosingParen mkNm (c : cs) = stripClosingParen (mkNm . showChar c) cs
+      stripClosingParen _ [] = name -- Not correctly parenthesized, fall back to input
+  case name of
+    '(' : xs -> stripClosingParen id xs
+    _ -> name

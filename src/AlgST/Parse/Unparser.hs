@@ -54,7 +54,7 @@ bracketsRound, bracketsSquare :: Brackets
 bracketsRound = ('(', ')')
 bracketsSquare = ('[', ']')
 
-showSortedVar :: Show a => Brackets -> Name stage scope -> a -> String
+showSortedVar :: (Show a) => Brackets -> Name stage scope -> a -> String
 showSortedVar (l, r) x t = [l] ++ pprName x ++ ":" ++ show t ++ [r]
 
 showKind ::
@@ -63,7 +63,7 @@ showKind ::
 showKind brackets var sort arrow term =
   showSortedVar brackets var sort ++ arrow ++ show term
 
-showForall :: Unparse (T.XType x) => K.Bind (XStage x) (T.Type x) -> String
+showForall :: (Unparse (T.XType x)) => K.Bind (XStage x) (T.Type x) -> String
 showForall (K.Bind _ a k t) = "forall " ++ showKind bracketsRound a k ". " t
 
 instance (Unparse (E.XExp x), Unparse (T.XType x)) => Show (E.Bind x) where
@@ -130,7 +130,7 @@ instance (Unparse a, Unparse b) => Unparse (Either a b) where
 unparseConst :: String -> Fragment
 unparseConst s = unparseApp s ([] :: [Void])
 
-unparseApp :: Unparse a => String -> [a] -> Fragment
+unparseApp :: (Unparse a) => String -> [a] -> Fragment
 unparseApp s = go (maxRator, s) . fmap unparse
   where
     go x [] = x
@@ -139,10 +139,10 @@ unparseApp s = go (maxRator, s) . fmap unparse
           r = bracket y Op.R appRator
        in go (appRator, l ++ " " ++ r) ys
 
-instance Unparse (T.XType x) => Show (T.Type x) where
+instance (Unparse (T.XType x)) => Show (T.Type x) where
   show = snd . unparse
 
-instance Unparse (T.XType x) => Unparse (T.Type x) where
+instance (Unparse (T.XType x)) => Unparse (T.Type x) where
   unparse (T.Unit _) = (maxRator, "()")
   unparse (T.Var _ a) = (maxRator, pprName a)
   unparse (T.Con _ a) = (maxRator, pprName a)
@@ -186,7 +186,7 @@ instance (Unparse (E.XExp x), Unparse (T.XType x)) => Unparse (Exp x) where
     | Just rator <- operatorRator x =
         let l = bracket (unparse e1) Op.L rator
             r = bracket (unparse e2) Op.R rator
-         in (rator, l ++ showOp x ++ r)
+         in (rator, l ++ " " ++ Op.pprRawName x ++ " " ++ r)
   unparse (E.App _ e1 e2) = (appRator, l ++ " " ++ r)
     where
       l = bracket (unparse e1) Op.L appRator
@@ -289,6 +289,3 @@ showCaseMap m =
         ++ show e
     showWild CaseBranch {branchBinds = Identity (_ :@ a), branchExp = e} =
       pprName a ++ " -> " ++ show e
-
-showOp :: ProgVar stage -> String
-showOp x = " " ++ tail (init $ pprName x) ++ " "

@@ -2,8 +2,9 @@
 
 module AlgST.Util where
 
-import Data.Foldable
 import AlgST.Syntax.Pos
+import Data.Char qualified as C
+import Data.Foldable
 import Data.List qualified as List
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe
@@ -25,7 +26,7 @@ joinOr xs = joinConnector "or" xs ""
 joinAnd :: NonEmpty String -> String
 joinAnd xs = joinConnector "and" xs ""
 
-whenJust :: Applicative f => Maybe a -> (a -> f ()) -> f ()
+whenJust :: (Applicative f) => Maybe a -> (a -> f ()) -> f ()
 whenJust = for_
 
 -- Like @take n xs@ but adds an extra item in case some elements were
@@ -60,7 +61,7 @@ instance Counted (Seq a) where
 plural :: (Counted a, one ~ b, many ~ b) => a -> one -> many -> b
 plural a one many = pluralZ a many one many
 
-sortPos :: HasPos a => [a] -> [a]
+sortPos :: (HasPos a) => [a] -> [a]
 sortPos =
   -- The @HasPos@ is usually very easy to access, there is no need for the
   -- decorate-sort-undecorate paradigm used by 'sortOn'.
@@ -72,6 +73,10 @@ sortPos' =
   -- decorate-sort-undecorate paradigm used by 'sortOn'.
   List.sortBy (comparing fst)
 
-mguard :: Monoid m => Bool -> m -> m
+mguard :: (Monoid m) => Bool -> m -> m
 mguard True m = m
 mguard False _ = mempty
+
+capitalise :: String -> String
+capitalise [] = []
+capitalise (x : xs) = C.toUpper x : xs
