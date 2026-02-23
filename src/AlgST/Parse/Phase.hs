@@ -20,7 +20,6 @@ import AlgST.Syntax.Phases
 import AlgST.Syntax.Traversal
 import AlgST.Syntax.Tree
 import AlgST.Syntax.Type qualified as T
-import Data.List qualified as L
 import Data.Void
 import Language.Haskell.TH.Syntax (Lift)
 
