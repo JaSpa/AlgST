@@ -1,0 +1,15 @@
+BETTER ERROR MESSAGES
+
+duplicate-constructor: highlight the containing data types
+
+case-double-branch case-double-wildcard: highlight whole case; only highlight constructor, not whole expression
+
+double-bind: highlight context: function/type definition head or enclosing case
+
+op-associativity: highlight full expression
+
+section-left-assoc: maybe hang messages by 2? Helps with parsing where a new message starts and the others continue
+
+section-left-assoc: include parentheses in highlight of sections
+
+kind-mismatch: highlight binder of type variables and definition site of types
