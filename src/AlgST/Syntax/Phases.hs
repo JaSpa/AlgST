@@ -17,6 +17,8 @@ type CAll = (Type -> Constraint) -> Phase -> Constraint
 
 type CSame = Phase -> Phase -> Constraint
 
+type CPointwise = (Type -> Type -> Constraint) -> Phase -> Phase -> Constraint
+
 type family XStage x :: Stage
 
 type XName x = Name (XStage x)

@@ -29,7 +29,7 @@ import Language.Haskell.TH.Syntax (Lift)
 -- aliases are expanded and type constructors are represented as 'TypeRef'.
 data Tc
 
-instance SynTraversable TcExpX Tc TcExpX Tc where
+instance SynTraversable Tc Tc TcExpX TcExpX where
   traverseSyntax proxy = \case
     ValueCase p exp map ->
       ValueCase p
@@ -74,6 +74,8 @@ instance Unparse TcExpX where
 data TypeRef = TypeRef
   { typeRefPos :: Pos,
     typeRefName :: !(TypeVar TcStage),
+    -- | Constructor names excluded from this type.
+    typeRefExcl :: !(TcNameMap Values Pos),
     typeRefArgs :: [TcType],
     typeRefKind :: !K.Kind
   }
@@ -82,15 +84,20 @@ data TypeRef = TypeRef
 instance HasPos TypeRef where
   pos = typeRefPos
 
-instance SynTraversable TypeRef Tc TypeRef Tc where
+instance SynTraversable Tc Tc TypeRef TypeRef where
   traverseSyntax proxy ref = do
     args <- traverse (traverseSyntax proxy) (typeRefArgs ref)
+    -- This is not a noop! Even though it looks like a `traverse pure` (which
+    -- would be a noop) the implementation of `traverseNameMap` calls into
+    -- `useConstructor` which is caller supplied.
+    excl <- traverseNameMap proxy pure (typeRefExcl ref)
     pure
       TypeRef
         { -- We are explicit in the fields so that an error is generated if there
           -- are fields added which might require traversing.
           typeRefName = typeRefName ref,
           typeRefArgs = args,
+          typeRefExcl = excl,
           typeRefKind = typeRefKind ref,
           typeRefPos = typeRefPos ref
         }
@@ -103,6 +110,7 @@ instance LabeledTree TypeRef where
   -- recursive and the LabeledTree class is not equipped to handle cyclic
   -- structures.
   labeledTree ref =
+    -- TODO: include typeRefExcl
     pure . Node "TypeRef" $
       leaf (pprName (typeRefName ref))
         : concatMap labeledTree (typeRefArgs ref)

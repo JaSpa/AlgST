@@ -13,6 +13,7 @@ module AlgST.Syntax.Tree
     Tree (..),
     tree,
     leaf,
+    describeName,
     fieldMapTree,
   )
 where
@@ -43,10 +44,10 @@ type LabTree = Tree String
 class LabeledTree a where
   labeledTree :: a -> [LabTree]
 
-drawLabeledTree :: LabeledTree a => a -> String
+drawLabeledTree :: (LabeledTree a) => a -> String
 drawLabeledTree = labeledTree >>> drawForest
 
-putLabeledTree :: LabeledTree a => a -> IO ()
+putLabeledTree :: (LabeledTree a) => a -> IO ()
 putLabeledTree = drawLabeledTree >>> putStr
 
 instance LabeledTree () where
@@ -55,20 +56,20 @@ instance LabeledTree () where
 instance LabeledTree Void where
   labeledTree = absurd
 
-instance LabeledTree a => LabeledTree (Maybe a) where
+instance (LabeledTree a) => LabeledTree (Maybe a) where
   labeledTree = concatMap labeledTree
 
 instance (LabeledTree a, LabeledTree b) => LabeledTree (Either a b) where
   labeledTree = either labeledTree labeledTree
 
-instance LabeledTree a => LabeledTree [a] where
+instance (LabeledTree a) => LabeledTree [a] where
   labeledTree = pure . tree "" . map labeledTree
 
 -- | @Pos@ values are ignored. They are not part of the tree visualization.
 instance LabeledTree Pos where
   labeledTree _ = []
 
-instance LabeledTree a => LabeledTree (Located a) where
+instance (LabeledTree a) => LabeledTree (Located a) where
   labeledTree = labeledTree . unL
 
 instance LabeledTree K.Kind where
@@ -163,7 +164,7 @@ instance
       . toList
       . opSeqExpressions
 
-instance T.ForallX LabeledTree x => LabeledTree (T.Type x) where
+instance (T.ForallX LabeledTree x) => LabeledTree (T.Type x) where
   labeledTree =
     pure . \case
       T.Unit x ->
@@ -234,10 +235,10 @@ instance (D.ForallDeclX LabeledTree x, T.ForallX LabeledTree x) => LabeledTree (
             nominalDeclTree labeledTree decl
           ]
 
-instance T.ForallX LabeledTree x => LabeledTree (D.TypeAlias x) where
+instance (T.ForallX LabeledTree x) => LabeledTree (D.TypeAlias x) where
   labeledTree alias = pure $ tree "TypeAlias" [typeAliasTree alias]
 
-typeAliasTree :: T.ForallX LabeledTree x => D.TypeAlias x -> [LabTree]
+typeAliasTree :: (T.ForallX LabeledTree x) => D.TypeAlias x -> [LabTree]
 typeAliasTree D.TypeAlias {..} =
   [ Node "kind" [leaf (show aliasKind)],
     Node "parameters" (paramsTree aliasParams),
@@ -290,7 +291,7 @@ instance (D.ForallConX LabeledTree x, T.ForallX LabeledTree x) => LabeledTree (D
             [tree "items" (labeledTree <$> items)]
           ]
 
-instance ForallX LabeledTree x => LabeledTree (Module x) where
+instance (ForallX LabeledTree x) => LabeledTree (Module x) where
   labeledTree pp = types ++ sigs ++ values ++ (showBench <$> moduleBench pp)
     where
       types =
@@ -318,7 +319,7 @@ instance ForallX LabeledTree x => LabeledTree (Module x) where
         | benchExpect b = "benchmark "
         | otherwise = "benchmark! "
 
-instance LabeledTree a => LabeledTree (Import a) where
+instance (LabeledTree a) => LabeledTree (Import a) where
   labeledTree i =
     [ tree
         ("Import " ++ "unqualified" `fromMaybe` qualified)
@@ -358,7 +359,7 @@ labeledMapTree ::
   [LabTree]
 labeledMapTree f g = fmap (\(a, b) -> Node (f a b) (g a b)) . Map.toList
 
-kbindNode :: LabeledTree a => String -> K.Bind stage a -> LabTree
+kbindNode :: (LabeledTree a) => String -> K.Bind stage a -> LabTree
 kbindNode con (K.Bind _ v k a) =
   let label = unwords [con, describeName v ++ ":" ++ show k]
    in Node label $ labeledTree a
@@ -376,11 +377,11 @@ fieldMapTree m = conCases ++ wildCases
         (E.casesPatterns m)
     wildCases =
       [ Node (describeName x) (labeledTree e)
-        | E.CaseBranch
-            { branchBinds = Identity (_ :@ x),
-              branchExp = e
-            } <-
-            toList (E.casesWildcard m)
+      | E.CaseBranch
+          { branchBinds = Identity (_ :@ x),
+            branchExp = e
+          } <-
+          toList (E.casesWildcard m)
       ]
 
 leaf :: a -> Tree a

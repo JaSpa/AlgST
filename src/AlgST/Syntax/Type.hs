@@ -31,7 +31,10 @@ module AlgST.Syntax.Type
     XNegate,
     XType,
     ForallX,
+
+    -- ** Constraints
     SameX,
+    PointwiseX,
   )
 where
 
@@ -87,19 +90,22 @@ type ForallX c x =
     c (XType x)
   )
 
-type SameX :: CSame
-type SameX x y =
-  ( XUnit x ~ XUnit y,
-    XArrow x ~ XArrow y,
-    XPair x ~ XPair y,
-    XSession x ~ XSession y,
-    XEnd x ~ XEnd y,
-    XForall x ~ XForall y,
-    XCon x ~ XCon y,
-    XApp x ~ XApp y,
-    XDualof x ~ XDualof y,
-    XNegate x ~ XNegate y
+type PointwiseX :: CPointwise
+type PointwiseX f x y =
+  ( f (XUnit x) (XUnit y),
+    f (XArrow x) (XArrow y),
+    f (XPair x) (XPair y),
+    f (XSession x) (XSession y),
+    f (XEnd x) (XEnd y),
+    f (XForall x) (XForall y),
+    f (XCon x) (XCon y),
+    f (XApp x) (XApp y),
+    f (XDualof x) (XDualof y),
+    f (XNegate x) (XNegate y)
   )
+
+type SameX :: CSame
+type SameX x y = PointwiseX (~) x y
 
 data Type x
   = -- | > Unit _                     ~ ()
@@ -132,6 +138,6 @@ data Type x
     Type (XType x)
   deriving stock (Generic)
 
-deriving stock instance ForallX Lift x => Lift (Type x)
+deriving stock instance (ForallX Lift x) => Lift (Type x)
 
-deriving via Generically (Type x) instance ForallX HasPos x => HasPos (Type x)
+deriving via Generically (Type x) instance (ForallX HasPos x) => HasPos (Type x)

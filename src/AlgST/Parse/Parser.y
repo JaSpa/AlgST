@@ -105,10 +105,11 @@ import           AlgST.Util.ErrorMessage
   LOWER_ID  { TokenLowerId  $$ }
   UPPER_ID  { TokenUpperId  $$ }
 
-  -- Operators. +/-/* can appear as special syntax items.
+  -- Operators. +/-/*/^ can appear as special syntax items.
   '+'      { TokenOperator ($$ :@ "+") }
   '-'      { TokenOperator ($$ :@ "-") }
   '*'      { TokenOperator ($$ :@ "*") }
+  '^'      { TokenOperator ($$ :@ "^") }
   OPERATOR { TokenOperator $$ }
 
   INT      { TokenInt      $$ }
@@ -502,6 +503,7 @@ Op :: { Located (ProgVar PStage) }
   | '+'       { $1 @- UnqualifiedName (Unqualified "(+)") }
   | '-'       { $1 @- UnqualifiedName (Unqualified "(-)") }
   | '*'       { $1 @- UnqualifiedName (Unqualified "(*)") }
+  | '^'       { $1 @- UnqualifiedName (Unqualified "(^)") }
 
 OpTys :: { PExp }
   : Op                      { uncurryL E.Var $1 }
@@ -523,13 +525,31 @@ polarised(t)
   | '+' polarised(t)   { $2 }
   | '-' polarised(t)   { T.Negate (pos $1) $2 :: PType }
 
+ConSequence1 :: { DL.DList (Located (ProgVar PStage)) }
+  : Constructor                   { DL.singleton $1 }
+  | ConSequence1 ',' Constructor  { DL.snoc $1 $3 }
+
+ConSequence :: { [Located (ProgVar PStage)] }
+  : {- empty -}                   { [] }
+  | ConSequence1                  { DL.toList $1 }
+  | ConSequence1 ','              { DL.toList $1 }
+
+TypeConOrSubset :: { PType }
+  : TypeName                              { uncurryL T.Con $1 }
+  | TypeName '[' opt('^') ConSequence ']' { T.Type ProtoSubset {
+      subsetCon = $1,
+      subsetPos = pos $2,
+      subsetNames = $4,
+      subsetComplement = isJust $3
+    } }
+
 TypeAtom :: { PType }
   : '()'                          { T.Unit (pos $1) }
   | '(,)'                         {% fatalError $ errorMisplacedPairCon @Types (pos $1) Proxy }
   | '(' Type ',' TupleType ')'    { T.Pair (pos $1) $2 $4 }
   | end                           { uncurryL T.End $1 }
   | TypeVar                       { uncurryL T.Var $1 }
-  | TypeName                      { uncurryL T.Con $1 }
+  | TypeConOrSubset               { $1 }
   | '(' Type ')'                  { $2 }
 
 Type1 :: { PType }

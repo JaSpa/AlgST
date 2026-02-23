@@ -301,6 +301,7 @@ applyTypeCon loc name con args = case con of
             { typeRefPos = loc,
               typeRefKind = kind,
               typeRefName = name,
+              typeRefExcl = mempty,
               typeRefArgs = snd <$> subs
             }
     pure (T.Type typeRef, kind)
@@ -626,8 +627,9 @@ kisynth =
     T.Negate p t -> do
       t' <- kicheck t K.P
       pure (T.Negate p t', K.P)
-    T.Type x ->
-      absurd x
+    T.Type protoSubset ->
+      -- TODO: implement type checking for protocol subsets
+      undefined
 
 kicheck :: (HasKiEnv env, HasKiSt st) => RnType -> K.Kind -> TcM env st TcType
 kicheck t k = do
@@ -927,6 +929,7 @@ instantiateDeclRef p name decl = do
       TypeRef
         { typeRefName = name,
           typeRefKind = tcDeclKind decl,
+          typeRefExcl = mempty,
           typeRefPos = p,
           typeRefArgs = (\(p :@ tv, k) -> T.Var (p @- k) tv) <$> params
         }
@@ -963,14 +966,7 @@ appTArrow = go id
 
 checkIfExpr :: Pos -> RnExp -> RnExp -> RnExp -> Maybe TcType -> TypeM (TcExp, TcType)
 checkIfExpr loc eCond eThen eElse mExpectedTy = do
-  let boolRef =
-        TypeRef
-          { typeRefPos = ZeroPos,
-            typeRefName = typeBool,
-            typeRefArgs = [],
-            typeRefKind = K.TU
-          }
-  eCond' <- tycheck eCond (T.Type boolRef)
+  eCond' <- tycheck eCond (T.Type (builtinRef typeBool))
   (mresTy, (eThen', eElse')) <- runBranched loc mExpectedTy do
     (,)
       <$> checkBranch (Error.CondThen (pos eThen)) (checkOrSynth eThen)
@@ -1265,21 +1261,28 @@ checkConsumedOverlap m1 other1 m2 other2 = Error.adds errors
       | (name, BranchConsumed consume var loc) <- Map.toList (x `Map.difference` y)
       ]
 
+-- | Returns the type for a literal expression. The result is always a valid
+-- 'TypeRef' without any arguments or constructor restrictions.
 litType :: Pos -> E.Lit -> TcType
 litType p = \case
   E.Unit -> T.Unit p
-  E.Int _ -> builtinRef typeInt
-  E.Char _ -> builtinRef typeChar
-  E.String _ -> builtinRef typeString
-  where
-    builtinRef name =
-      T.Type @Tc
-        TypeRef
-          { typeRefPos = p,
-            typeRefName = name,
-            typeRefArgs = [],
-            typeRefKind = K.TU
-          }
+  E.Int _ -> T.Type (builtinRef typeInt)
+  E.Char _ -> T.Type (builtinRef typeChar)
+  E.String _ -> T.Type (builtinRef typeString)
+
+-- | Creates a reference to a builtin type.
+--
+-- The kind will always be 'K.TU', without any arguments, and no excluded
+-- constructors.
+builtinRef :: TypeVar TcStage -> TypeRef
+builtinRef refName =
+  TypeRef
+    { typeRefPos = ZeroPos,
+      typeRefName = refName,
+      typeRefExcl = mempty,
+      typeRefArgs = [],
+      typeRefKind = K.TU
+    }
 
 -- | Synthesizes the 'T.Arrow' type of a @"AlgST.Syntax.Expression".'Bind'@
 -- (/E-LinAbs/ or /E-UnAbs/).

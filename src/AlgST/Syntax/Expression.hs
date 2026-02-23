@@ -46,10 +46,13 @@ module AlgST.Syntax.Expression
     XExp,
     ForallX,
 
+    -- ** Constraints
+    SameX,
+    PointwiseX,
+
     -- * Binds
     Bind (..),
     XBind,
-    SameX,
   )
 where
 
@@ -107,26 +110,29 @@ type ForallX c x =
     c (XBind x)
   )
 
-type SameX :: CSame
-type SameX x y =
-  ( XLit x ~ XLit y,
-    XCon x ~ XCon y,
-    XAbs x ~ XAbs y,
-    XApp x ~ XApp y,
-    XPair x ~ XPair y,
-    XCond x ~ XCond y,
-    XCase x ~ XCase y,
-    XTAbs x ~ XTAbs y,
-    XTApp x ~ XTApp y,
-    XRec x ~ XRec y,
-    XUnLet x ~ XUnLet y,
-    XPatLet x ~ XPatLet y,
-    XNew x ~ XNew y,
-    XSelect x ~ XSelect y,
-    XFork x ~ XFork y,
-    XFork_ x ~ XFork_ y,
-    XBind x ~ XBind y
+type PointwiseX :: CPointwise
+type PointwiseX f x y =
+  ( f (XLit x) (XLit y),
+    f (XCon x) (XCon y),
+    f (XAbs x) (XAbs y),
+    f (XApp x) (XApp y),
+    f (XPair x) (XPair y),
+    f (XCond x) (XCond y),
+    f (XCase x) (XCase y),
+    f (XTAbs x) (XTAbs y),
+    f (XTApp x) (XTApp y),
+    f (XRec x) (XRec y),
+    f (XUnLet x) (XUnLet y),
+    f (XPatLet x) (XPatLet y),
+    f (XNew x) (XNew y),
+    f (XSelect x) (XSelect y),
+    f (XFork x) (XFork y),
+    f (XFork_ x) (XFork_ y),
+    f (XBind x) (XBind y)
   )
+
+type SameX :: CSame
+type SameX x y = PointwiseX (~) x y
 
 data Lit
   = Unit
@@ -181,7 +187,7 @@ data Exp x
 
 deriving stock instance (ForallX Lift x, T.ForallX Lift x) => Lift (Exp x)
 
-deriving via (Generically (Exp x)) instance ForallX HasPos x => HasPos (Exp x)
+deriving via (Generically (Exp x)) instance (ForallX HasPos x) => HasPos (Exp x)
 
 -- | A restricted version of 'Exp' which binds at least one value via lambda
 -- abstraction.
@@ -212,7 +218,7 @@ viewRecLam (TypeAbs x (K.Bind p v t e)) =
 viewRecLam _ =
   Nothing
 
-foldTypeApps :: Foldable f => (Exp x -> T.Type x -> XTApp x) -> Exp x -> f (T.Type x) -> Exp x
+foldTypeApps :: (Foldable f) => (Exp x -> T.Type x -> XTApp x) -> Exp x -> f (T.Type x) -> Exp x
 foldTypeApps f = foldl' \e ty -> TypeApp (f e ty) e ty
 
 type CaseMap x = CaseMap' [] Maybe x
@@ -227,12 +233,12 @@ data CaseMap' f g x = CaseMap
 deriving stock instance
   ( ForallX Lift x,
     T.ForallX Lift x,
-    forall a. Lift a => Lift (f a),
-    forall a. Lift a => Lift (g a)
+    forall a. (Lift a) => Lift (f a),
+    forall a. (Lift a) => Lift (g a)
   ) =>
   Lift (CaseMap' f g x)
 
-emptyCaseMap :: Alternative g => CaseMap' f g x
+emptyCaseMap :: (Alternative g) => CaseMap' f g x
 emptyCaseMap = CaseMap mempty empty
 
 data CaseBranch f x = CaseBranch
@@ -242,7 +248,7 @@ data CaseBranch f x = CaseBranch
   }
 
 deriving stock instance
-  (ForallX Lift x, T.ForallX Lift x, forall a. Lift a => Lift (f a)) =>
+  (ForallX Lift x, T.ForallX Lift x, forall a. (Lift a) => Lift (f a)) =>
   Lift (CaseBranch f x)
 
 instance HasPos (CaseBranch f x) where
@@ -257,5 +263,5 @@ data Bind x
 
 deriving stock instance (ForallX Lift x, T.ForallX Lift x) => Lift (Bind x)
 
-instance HasPos (XBind x) => HasPos (Bind x) where
+instance (HasPos (XBind x)) => HasPos (Bind x) where
   pos (Bind x _ _ _ _) = pos x

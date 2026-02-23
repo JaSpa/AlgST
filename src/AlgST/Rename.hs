@@ -83,7 +83,7 @@ type ResolvedImport = Import (ModuleName, ModuleMap)
 
 -- | Merges the 'RenameEnv's extracted from all given imports. See
 -- 'importedRenameEnv' for more information.
-foldImportedRenameEnv :: MonadErrors m => [Located ResolvedImport] -> m RenameEnv
+foldImportedRenameEnv :: (MonadErrors m) => [Located ResolvedImport] -> m RenameEnv
 foldImportedRenameEnv = getAp . foldMap (Ap . importedRenameEnv)
 
 -- | This function builds a 'RenameEnv' from a 'ResolvedImport'. The keys in
@@ -94,7 +94,7 @@ foldImportedRenameEnv = getAp . foldMap (Ap . importedRenameEnv)
 -- imported module will be diagnosed.
 importedRenameEnv ::
   forall m.
-  MonadErrors m =>
+  (MonadErrors m) =>
   Located ResolvedImport ->
   m RenameEnv
 importedRenameEnv stmt =
@@ -121,12 +121,12 @@ importedRenameEnv stmt =
 
     allItems :: Pos -> (ImportKey -> Bool) -> RenameEnv
     allItems allLoc include = do
-      let item :: forall scope. SingI scope => Unqualified -> NameR scope -> Bindings scope
+      let item :: forall scope. (SingI scope) => Unqualified -> NameR scope -> Bindings scope
           item unqualified nameR =
             mguard
               (include (demote @scope, unqualified))
               (singleBinding allLoc unqualified nameR)
-      let mkBindings :: forall scope. SingI scope => Bindings scope
+      let mkBindings :: forall scope. (SingI scope) => Bindings scope
           mkBindings = HM.foldMapWithKey item $ importMap ^. scopeL . _TopLevels
       RenameEnv {rnTyVars = mkBindings, rnProgVars = mkBindings}
 
@@ -135,8 +135,8 @@ importedRenameEnv stmt =
       let resolvedItem =
             importMap
               ^. scopeL' sscope
-              . _TopLevels
-              . L.hashAt nameThere
+                . _TopLevels
+                . L.hashAt nameThere
       let unknownItemErr =
             Error.unknownImportItem
               (pos stmt)
@@ -159,14 +159,14 @@ importAllEnv loc targetName targetMap qualifier =
       rnProgVars = mkBindings
     }
   where
-    mkBindings :: forall scope. SingI scope => Bindings scope
+    mkBindings :: forall scope. (SingI scope) => Bindings scope
     mkBindings =
       targetMap
         ^. scopeL
-        . _TopLevels
-        . to HM.toList
-        . traverse
-        . to (uncurry singleBinding)
+          . _TopLevels
+          . to HM.toList
+          . traverse
+          . to (uncurry singleBinding)
 
     singleBinding :: forall scope. Unqualified -> NameR scope -> Bindings scope
     singleBinding unq nameR = do
@@ -195,7 +195,7 @@ instance SynTraversal RnM Parse Rn where
 
   typeExtension pxy = fmap T.Type . traverseSyntax pxy
 
-lookupName :: SingI scope => Error.NameKind -> Pos -> NameW scope -> RnM (NameR scope)
+lookupName :: (SingI scope) => Error.NameKind -> Pos -> NameW scope -> RnM (NameR scope)
 lookupName kind loc w = do
   resolve <- asks . view $ _2 . scopeL . _Bindings . at w
   case viewUniqueResolve <$> resolve of
@@ -211,17 +211,17 @@ bindingParams params = withBindings \f ->
   traverse (bitraverse (traverse f) pure) params
 
 bindingANames ::
-  Traversable f => f (ANameG Written) -> (f (ANameG Resolved) -> RnM a) -> RnM a
+  (Traversable f) => f (ANameG Written) -> (f (ANameG Resolved) -> RnM a) -> RnM a
 bindingANames vs = withBindings \bind ->
   traverse (bitraverse bind bind) vs
 {-# INLINEABLE bindingANames #-}
 
 withBindings ::
-  (forall f. Applicative f => (forall s. SingI s => PName s -> f (RnName s)) -> f a) ->
+  (forall f. (Applicative f) => (forall s. (SingI s) => PName s -> f (RnName s)) -> f a) ->
   (a -> RnM b) ->
   RnM b
 withBindings f k = do
-  let bind :: SingI s => PName s -> StateT RenameEnv Fresh (RnName s)
+  let bind :: (SingI s) => PName s -> StateT RenameEnv Fresh (RnName s)
       bind v = do
         v' <- lift $ freshResolved v
         scopeL . _Bindings %= Map.insert v (UniqueLocal v')
@@ -336,11 +336,11 @@ doRename m = do
         moduleBench = benches
       }
 
-renameSyntax :: SynTraversable (s Parse) Parse (s Rn) Rn => s Parse -> RnM (s Rn)
+renameSyntax :: (SynTraversable Parse Rn (s Parse) (s Rn)) => s Parse -> RnM (s Rn)
 renameSyntax = traverseSyntaxBetween (Proxy @Parse) (Proxy @Rn)
 
 renameGlobalNameMap ::
-  SingI scope =>
+  (SingI scope) =>
   (a -> RnM a') ->
   NameMapG Written scope a ->
   RnM (NameMapG Resolved scope a')
@@ -348,8 +348,8 @@ renameGlobalNameMap rn m = do
   tls <- asks fst
   fmap Map.fromList . sequenceA $
     [ (nameR,) <$> rn a
-      | (nameUnqualified -> u, a) <- Map.toList m,
-        nameR <- tls ^.. scopeL . _TopLevels . hashAt u . traverse
+    | (nameUnqualified -> u, a) <- Map.toList m,
+      nameR <- tls ^.. scopeL . _TopLevels . hashAt u . traverse
     ]
 
 renameTypeDecl :: D.TypeDecl Parse -> RnM (D.TypeDecl Rn)
