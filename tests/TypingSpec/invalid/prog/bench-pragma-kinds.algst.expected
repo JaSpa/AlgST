@@ -1,4 +1,3 @@
-
 1:15: error:
 	 Kind mismatch in benchmark pragma.
 	     type at 1:15 has kind TU

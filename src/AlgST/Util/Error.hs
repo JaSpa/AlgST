@@ -45,12 +45,12 @@ renderErrors' maxErrs mode fileName errs =
   sortPos errs
     & fmap (Endo . render)
     & maybe id (\n -> truncate n truncMsg) maxErrs
-    & List.intersperse (Endo $ showChar '\n')
+    & List.intersperse (Endo $ showString "\n\n")
     & fold
     & appEndo
   where
     render = formatErrorMessagesS mode fileName
-    truncMsg = Endo $ showString "\nToo many errors. Truncated."
+    truncMsg = Endo $ showString "Too many errors. Truncated."
 
 -- | Formats a single error.
 formatErrorMessages :: OutputMode -> String -> Diagnostic -> String
@@ -69,7 +69,7 @@ styledMessage mode = \case
   Error e -> showChar ' ' . styledMessagePart mode e
   ErrLine -> linebreak
 
-styledMessagePart :: ErrorMsg a => OutputMode -> a -> ShowS
+styledMessagePart :: (ErrorMsg a) => OutputMode -> a -> ShowS
 styledMessagePart mode a =
   -- Every part has to be bolded by itself instead of the whole message because
   -- resetting the color after a colored part in the error message would reset
@@ -81,8 +81,8 @@ styleHeader mode kind f p =
   start . location . endSpace . diagKind
   where
     start
-      | null f = showChar '\n'
-      | otherwise = bold $ showChar '\n' . showString f . showChar ':'
+      | null f = id
+      | otherwise = bold $ showString f . showChar ':'
     location = case p of
       ZeroPos -> id
       _ -> bold $ shows p . showChar ':'

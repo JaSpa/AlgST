@@ -1,4 +1,3 @@
-
 1:1: error:
 	 Pair constructor (,) cannot be used as an expression.
 	 It can only appear in patterns and with ‘select’.

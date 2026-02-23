@@ -40,7 +40,7 @@ parseTH modName baseMap srcLines = Code.do
   let checked = resolve mempty >>= \(RenameExtra f) -> f check
   case checked of
     Left errs -> Code.do
-      traverse_ (reportError . tail . formatErrorMessages Plain "") errs
+      traverse_ (reportError . formatErrorMessages Plain "") errs
       [||(modmap, mempty, emptyModule)||]
     Right (tcmod, ctxt) ->
       [||(modmap, ctxt, tcmod)||]

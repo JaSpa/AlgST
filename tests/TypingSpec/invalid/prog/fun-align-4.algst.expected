@@ -1,4 +1,3 @@
-
 2:5: error:
 	 Binding of variable x does not align with type
 	       forall (a:TU). Int

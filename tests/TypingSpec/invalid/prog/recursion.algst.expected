@@ -1,4 +1,3 @@
-
 2:7: error:
 	 Expression
 	     rec go : Bool -o Int = \(a:Bool) -o go a

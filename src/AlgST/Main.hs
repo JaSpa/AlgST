@@ -177,7 +177,7 @@ answerQueries out outMode queries checkResult = do
       ]
 
     parseRename ::
-      SynTraversable (s Parse) Parse (s Rn) Rn =>
+      (SynTraversable Parse Rn (s Parse) (s Rn)) =>
       P.Parser (s Parse) ->
       String ->
       (s Rn -> Tc.TypeM a) ->
@@ -197,7 +197,7 @@ answerQueries out outMode queries checkResult = do
     printResult :: String -> String -> Either (NonEmpty Diagnostic) [String] -> IO Bool
     printResult heading src = \case
       Left errs -> do
-        outputLnS out $ prefix . renderErrors' (Just 5) outMode "" (toList errs)
+        outputLnS out $ prefix . showChar '\n' . renderErrors' (Just 5) outMode "" (toList errs)
         pure False
       Right lns -> do
         outputLnS out prefix
@@ -250,7 +250,7 @@ runInterpret opts out outMode checkedModules = do
           outputLnS out $ applyStyle outMode styleBold (showString "Result: ") . shows val
       pure $ isRight result
 
-outputException :: Exception e => OutputHandle -> OutputMode -> String -> e -> IO ()
+outputException :: (Exception e) => OutputHandle -> OutputMode -> String -> e -> IO ()
 outputException h m s e =
   outputLnS h $ header . showChar '\n' . showString (displayException e)
   where

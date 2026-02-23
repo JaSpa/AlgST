@@ -1,4 +1,3 @@
-
 2:6: error:
 	 Binding of type variable a does not align with type
 	       Int -> forall (a:TU). a -> ()

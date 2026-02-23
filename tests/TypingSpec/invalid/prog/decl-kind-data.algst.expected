@@ -1,4 +1,3 @@
-
 1:1: error:
 	 The declared type of MyProto is P
 	 ‘data’ declarations can only declare types with kinds TL, or TU (the default).

@@ -1,4 +1,3 @@
-
 2:5: error:
 	 Binding of variable x does not align with type
 	       Int
